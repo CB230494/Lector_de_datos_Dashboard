@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 # ================================================================
 # Lector de Matrices (Excel) → Resumen consolidado en Excel
-# - Soporta múltiples .xlsx/.xlsm
-# - Detección por rótulos (no por posiciones)
+# - Múltiples .xlsx/.xlsm
+# - Detección por rótulos y contenido (layout-independiente)
+# - GL/FP por conteo de filas; Avance por columnas "Avance" (trimestres)
 # - Filtros anti falsos positivos (años, % como cantidades, etc.)
-# - Avance (n y %), GL/FP, Total de Indicadores
 # - Descarga del consolidado a Excel
 # ================================================================
 
@@ -25,9 +25,8 @@ def _to_int(x) -> Optional[int]:
     """Solo acepta enteros de 1–3 dígitos (evita '2025' y descarta celdas con '%')."""
     if x is None: return None
     s = str(x).strip()
-    if "%" in s:
+    if "%" in s:  # cantidades jamás llevan %
         return None
-    # extrae sólo dígitos y signo y valida 1..3 dígitos
     digits = re.sub(r"[^\d-]", "", s)
     if not re.fullmatch(r"-?\d{1,3}", digits):
         return None
@@ -48,7 +47,7 @@ def _to_pct(x) -> Optional[float]:
     return max(0.0, min(100.0, v * 100.0))
 
 def _read_df(file) -> pd.DataFrame:
-    # header=None mantiene todo como data; dtype=str conserva formatos (%, etc.)
+    # header=None mantiene todo como data; dtype=str conserva formatos (%)
     return pd.read_excel(file, engine="openpyxl", header=None, dtype=str)
 
 def _find(df: pd.DataFrame, pattern: str) -> List[Tuple[int,int]]:
@@ -97,152 +96,85 @@ def detect_delegacion(df: pd.DataFrame) -> Optional[str]:
             if v: return str(v).strip()
     return None
 
-def detect_lineas_accion(df: pd.DataFrame, debug: bool=False) -> Tuple[Optional[int], Optional[Tuple[int,int]]]:
+def detect_lineas_accion(df: pd.DataFrame, debug: bool=False) -> Optional[int]:
+    # Busca rótulo "Líneas de Acción" y recoge enteros cercanos; toma el mayor (evita 1 residuales)
     hits = _find(df, r"\blineas?\s*de\s*accion\b")
     for (r,c) in hits:
         cands = []
         for (i,j) in _neighbors(df, r, c, up=0, down=6, left=2, right=4):
             cands.append(_to_int(df.iat[i,j]))
-        nums = [v for v in cands if v is not None]
-        if nums:
-            val = _pick_best_count(nums, max_allowed=60)
-            if debug and val is not None:
-                st.caption(f"Líneas de Acción detectadas: {val}")
-            return val, None
-    return None, None
+        val = _pick_best_count(cands, max_allowed=60)
+        if debug and val is not None:
+            st.caption(f"Líneas de Acción detectadas: {val}")
+        if val is not None:
+            return val
+    # Fallback: contar rótulos "Linea de Accion #"
+    la_hits = _find(df, r"\blinea\s+de\s+accion\s*#")
+    if la_hits:
+        return len(la_hits)
+    return None
 
-def _row_has_all(row_vals: List[str], needed: List[str]) -> bool:
-    normed = [_norm(v) for v in row_vals]
-    return all(any(k in cell for cell in normed) for k in needed)
-
-def detect_avance_indicadores(df: pd.DataFrame, debug: bool=False) -> Dict[str, Dict[str, Optional[float]]]:
-    """
-    Devuelve:
-      {'completos': {'n','%'}, 'con_actividades': {'n','%'}, 'sin_actividades': {'n','%'}}
-    - Encuentra fila con 'Completos | Con actividades | Sin actividades'
-    - Toma la primera fila numérica (sin %) debajo y la primera fila con % debajo
-    - Tolera mezcla n/% entre esas dos filas
-    """
-    res = { "completos":{"n":None,"%":None},
-            "con_actividades":{"n":None,"%":None},
-            "sin_actividades":{"n":None,"%":None} }
-
+# -------- NUEVO: detección robusta de GL/FP y Avance por “lo visible” -----
+def detect_indicator_rows(df: pd.DataFrame) -> List[int]:
+    """Devuelve los índices de fila que representan indicadores (GL o FP en la col que sea)."""
+    rows = []
     for r in range(df.shape[0]):
-        row = [str(x) if x is not None else "" for x in df.iloc[r,:].tolist()]
-        if not row:
-            continue
-        normed = [_norm(x) for x in row]
-        if not (any("complet" in x for x in normed) and
-                any("con actividades" in x for x in normed) and
-                any("sin actividades" in x for x in normed)):
-            continue
+        # busca 'gl' o 'fp' en alguna celda de las primeras 5 columnas (títulos suelen estar a la izquierda)
+        left_vals = [df.iat[r, c] for c in range(min(6, df.shape[1]))]
+        left_norm = [_norm(v) for v in left_vals]
+        if any(v == "gl" for v in left_norm) or any(v == "fp" for v in left_norm):
+            rows.append(r)
+    return rows
 
-        # Mapear columna para cada encabezado
-        hdr_idx = {}
-        for j, h in enumerate(normed):
-            if "complet" in h and "completos" not in hdr_idx:
-                hdr_idx["completos"] = j
-            elif "con actividades" in h and "con_actividades" not in hdr_idx:
-                hdr_idx["con_actividades"] = j
-            elif "sin actividades" in h and "sin_actividades" not in hdr_idx:
-                hdr_idx["sin_actividades"] = j
+def detect_avance_columns(df: pd.DataFrame) -> List[int]:
+    """Devuelve las columnas que se llaman 'Avance' (los 4 trimestres)."""
+    cols = []
+    for r in range(df.shape[0]):
+        row = [df.iat[r, c] for c in range(df.shape[1])]
+        for c, v in enumerate(row):
+            if "avance" in _norm(v):
+                cols.append(c)
+        # toma la primera fila que tenga 2+ 'Avance' y usa esas columnas
+        if len(cols) >= 2:
+            return sorted(list(set(cols)))
+        else:
+            cols = []
+    # fallback: intenta las posiciones típicas
+    fallback = [10, 15, 20, 25]
+    return [c for c in fallback if c < df.shape[1]]
 
-        # Primera fila numérica (sin %) debajo
-        num_row = None
-        rr = r + 1
-        while rr < df.shape[0]:
-            vals = [str(x) if x is not None else "" for x in df.iloc[rr,:].tolist()]
-            has_pct = any("%" in v for v in vals)
-            has_int = any(_to_int(v) is not None for v in vals)
-            if has_int and not has_pct:
-                num_row = vals
-                break
-            rr += 1
+def gl_fp_counts(df: pd.DataFrame) -> Tuple[int, int]:
+    rows = detect_indicator_rows(df)
+    gl = fp = 0
+    for r in rows:
+        left_vals = [df.iat[r, c] for c in range(min(6, df.shape[1]))]
+        left_norm = [_norm(v) for v in left_vals]
+        if any(v == "gl" for v in left_norm):
+            gl += 1
+        elif any(v == "fp" for v in left_norm):
+            fp += 1
+    return gl, fp
 
-        # Primera fila de porcentajes (con %) debajo
-        pct_row = None
-        rr2 = r + 1
-        while rr2 < df.shape[0]:
-            vals = [str(x) if x is not None else "" for x in df.iloc[rr2,:].tolist()]
-            if any("%" in v for v in vals):
-                pct_row = vals
-                break
-            rr2 += 1
+def avance_counts(df: pd.DataFrame) -> Dict[str, int]:
+    rows = detect_indicator_rows(df)
+    avance_cols = detect_avance_columns(df)
+    counts = {"completos": 0, "con_actividades": 0, "sin_actividades": 0}
 
-        for key, j in hdr_idx.items():
-            n = _to_int(num_row[j]) if (num_row and j < len(num_row)) else None
-            p = _to_pct(pct_row[j]) if (pct_row and j < len(pct_row)) else None
-            # Mezcla tolerada
-            if n is None and num_row and j < len(num_row):
-                p2 = _to_pct(num_row[j])
-                if p is None and p2 is not None:
-                    p = p2
-            if p is None and pct_row and j < len(pct_row):
-                n2 = _to_int(pct_row[j])
-                if n is None and n2 is not None:
-                    n = n2
-            res[key] = {"n": n, "%": p}
+    def row_status(r: int) -> str:
+        vals = [df.iat[r, c] for c in avance_cols]
+        valsn = [_norm(v) for v in vals]
+        if any("complet" in v for v in valsn):
+            return "completos"
+        if any("con actividades" in v for v in valsn):
+            return "con_actividades"
+        if any("sin actividades" in v for v in valsn):
+            return "sin_actividades"
+        # si está vacío en todos → trátalo como sin actividades (ajustable)
+        return "sin_actividades"
 
-        if debug:
-            st.caption(f"Avance detectado en fila {r}: {res}")
-        return res
-
-    return res
-
-def detect_indicadores_categoria(df: pd.DataFrame, categoria: str, debug: bool=False) -> Tuple[Optional[int], Optional[str]]:
-    """
-    1) Busca el texto 'categoria' (Gobierno Local | Fuerza Pública)
-    2) Localiza 'Indicadores' cerca y toma el número grande adyacente (arriba/abajo ±1 col)
-    3) Si falla, suma la última cifra entera en filas con % (tablita de 3 filas)
-    """
-    anchors = _find(df, _norm(categoria))
-    if not anchors:
-        return None, "sin_ancla"
-
-    for (ra, ca) in anchors:
-        # (1) Buscar rótulo "Indicadores" cerca
-        inds = []
-        for (ri, ci) in _neighbors(df, ra, ca, up=0, down=18, left=0, right=18):
-            if "indicadores" in _norm(df.iat[ri, ci]):
-                inds.append((ri, ci))
-
-        # (2) Número grande adyacente
-        for (ri, ci) in inds:
-            cands = []
-            for delta_r in (-2, -1, 1, 2):
-                rr = ri + delta_r
-                if 0 <= rr < df.shape[0]:
-                    for dc in (-1, 0, 1):
-                        cc = ci + dc
-                        if 0 <= cc < df.shape[1]:
-                            cands.append(_to_int(df.iat[rr, cc]))
-            val = _pick_best_count([v for v in cands if v is not None], max_allowed=60)
-            if val is not None:
-                if debug: st.caption(f"{categoria}: número grande cerca de 'Indicadores' → {val}")
-                return val, "indicadores_label"
-
-        # (3) Suma de última cifra entera por fila (en filas que tengan %)
-        sum_cand, found = 0, False
-        for rr in range(ra, min(ra + 15, df.shape[0])):
-            row = [df.iat[rr, cc] for cc in range(max(0, ca - 5), min(ca + 10, df.shape[1]))]
-            if not row: 
-                continue
-            if not any("%" in str(v) for v in row if v is not None):
-                continue
-            last_int = None
-            for v in reversed(row):
-                vi = _to_int(v)
-                if vi is not None:
-                    last_int = vi
-                    break
-            if last_int is not None:
-                sum_cand += last_int
-                found = True
-        if found and 0 < sum_cand <= 60:
-            if debug: st.caption(f"{categoria}: suma de tablita = {sum_cand}")
-            return sum_cand, "tabla_sum"
-
-    return None, "no_encontrado"
+    for r in rows:
+        counts[row_status(r)] += 1
+    return counts, len(rows)
 
 def detect_total_indicadores(df: pd.DataFrame) -> Optional[int]:
     hits = _find(df, r"\btotal\s+de\s+indicadores\b")
@@ -259,35 +191,55 @@ def detect_total_indicadores(df: pd.DataFrame) -> Optional[int]:
 def process_file(upload, debug: bool=False) -> Dict:
     df = _read_df(upload)
 
-    lineas, _ = detect_lineas_accion(df, debug=debug)
-    avance = detect_avance_indicadores(df, debug=debug)
-    gl, _ = detect_indicadores_categoria(df, "gobierno local", debug=debug)
-    fp, _ = detect_indicadores_categoria(df, "fuerza publica", debug=debug)
-    total = detect_total_indicadores(df)
+    # Delegación y Líneas de Acción (como tenías)
+    deleg = detect_delegacion(df)
+    lineas = detect_lineas_accion(df, debug=debug)
 
-    # Cross-check básico con Total de Indicadores
-    if total is not None and (gl is None or fp is None):
-        if gl is not None and fp is None:
-            fp = total - gl
-        elif fp is not None and gl is None:
-            gl = total - fp
+    # NUEVO: GL/FP por conteo de filas
+    gl, fp = gl_fp_counts(df)
+
+    # NUEVO: Avance por columnas "Avance"
+    avance_dict, total_ind = avance_counts(df)
+    comp_n = avance_dict["completos"]
+    con_n  = avance_dict["con_actividades"]
+    sin_n  = avance_dict["sin_actividades"]
+
+    # Porcentajes
+    def pct(n): 
+        return round((n / total_ind) * 100.0, 1) if total_ind and n is not None else None
+    comp_p = pct(comp_n)
+    con_p  = pct(con_n)
+    sin_p  = pct(sin_n)
+
+    # Cross-check con "Total de Indicadores" si existiera
+    total_from_label = detect_total_indicadores(df)
+    total_out = total_ind if total_ind else total_from_label
+    if (gl == 0 or fp == 0) and total_out and gl + fp != total_out:
+        # si uno de los dos es 0, y tenemos total, intenta corregir
+        if gl == 0 and fp > 0:
+            gl = max(0, total_out - fp)
+        elif fp == 0 and gl > 0:
+            fp = max(0, total_out - gl)
 
     out = {
         "archivo": upload.name,
-        "delegacion": detect_delegacion(df),
+        "delegacion": deleg,
         "lineas_accion": lineas,
 
-        "completos_n": avance["completos"]["n"],
-        "completos_pct": avance["completos"]["%"],
-        "conact_n": avance["con_actividades"]["n"],
-        "conact_pct": avance["con_actividades"]["%"],
-        "sinact_n": avance["sin_actividades"]["n"],
-        "sinact_pct": avance["sin_actividades"]["%"],
+        "completos_n": comp_n,
+        "completos_pct": comp_p,
+        "conact_n": con_n,
+        "conact_pct": con_p,
+        "sinact_n": sin_n,
+        "sinact_pct": sin_p,
 
-        "indicadores_gl": gl,
-        "indicadores_fp": fp,
-        "indicadores_total": (gl or 0) + (fp or 0) if (gl is not None or fp is not None) else total,
+        "indicadores_gl": gl if gl is not None else None,
+        "indicadores_fp": fp if fp is not None else None,
+        "indicadores_total": total_out if total_out is not None else (gl + fp if (gl or fp) else None),
     }
+
+    if debug:
+        st.caption(f"[DEBUG] Avance cols: {detect_avance_columns(df)} | rows GL/FP: {gl}+{fp}={gl+fp}")
     return out
 
 # --------------------------- UI --------------------------------
@@ -301,8 +253,8 @@ with st.sidebar:
 st.markdown("""
 Sube tus matrices (.xlsx / .xlsm). La app detecta:
 - **Delegación**, **Líneas de Acción**
-- **Avance de Indicadores** (*Completos / Con actividades / Sin actividades*, con **n** y **%**)
-- **Indicadores** por **Gobierno Local** y **Fuerza Pública**
+- **Avance de Indicadores** (*Completos / Con actividades / Sin actividades*, con **n** y **%**, evaluado por fila de indicador y columnas **Avance**)
+- **Indicadores** por **Gobierno Local** y **Fuerza Pública** (conteo de filas GL/FP)
 - **Total de Indicadores** (si existe)
 
 y genera un **Excel consolidado** listo para descargar.
@@ -337,7 +289,7 @@ if uploads:
         order = list(rename.keys())
         df_out = df_out[order].rename(columns=rename)
 
-        # Formato de porcentaje
+        # Formato %
         for col in ["Completos (%)","Con actividades (%)","Sin actividades (%)"]:
             if col in df_out.columns:
                 df_out[col] = df_out[col].apply(lambda v: f"{v:.1f}%" if pd.notna(v) else None)
