@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 # ================================================================
 # Lector de Matrices (Excel) → Resumen consolidado en Excel
+# - Soporta múltiples .xlsx/.xlsm
+# - Detección por rótulos (no por posiciones)
+# - Filtros anti falsos positivos (años, % como cantidades, etc.)
+# - Avance (n y %), GL/FP, Total de Indicadores
+# - Descarga del consolidado a Excel
 # ================================================================
 
 import io, re, unicodedata
@@ -17,20 +22,22 @@ def _norm(x: str) -> str:
     return re.sub(r"\s+", " ", x).strip().lower()
 
 def _to_int(x) -> Optional[int]:
+    """Solo acepta enteros de 1–3 dígitos (evita '2025' y descarta celdas con '%')."""
     if x is None: return None
     s = str(x).strip()
-    if "%" in s:              # nunca usamos % como cantidades
+    if "%" in s:
         return None
-    m = re.fullmatch(r"-?\d{1,3}", re.sub(r"[^\d-]", "", s))  # 1 a 3 dígitos
-    if m:
-        try:
-            val = int(m.group())
-            return val
-        except:
-            return None
-    return None  # descarta 2025 y similares
+    # extrae sólo dígitos y signo y valida 1..3 dígitos
+    digits = re.sub(r"[^\d-]", "", s)
+    if not re.fullmatch(r"-?\d{1,3}", digits):
+        return None
+    try:
+        return int(digits)
+    except:
+        return None
 
 def _to_pct(x) -> Optional[float]:
+    """Devuelve porcentaje 0..100; si viene 0..1 lo escala; tolera '0', '0%'."""
     if x is None: return None
     s = str(x).replace(",", ".")
     m = re.search(r"-?\d+(\.\d+)?", s)
@@ -41,9 +48,11 @@ def _to_pct(x) -> Optional[float]:
     return max(0.0, min(100.0, v * 100.0))
 
 def _read_df(file) -> pd.DataFrame:
+    # header=None mantiene todo como data; dtype=str conserva formatos (%, etc.)
     return pd.read_excel(file, engine="openpyxl", header=None, dtype=str)
 
 def _find(df: pd.DataFrame, pattern: str) -> List[Tuple[int,int]]:
+    """Encuentra celdas cuyo texto normalizado matchee el patrón (regex)."""
     rx = re.compile(pattern)
     out = []
     for r in range(df.shape[0]):
@@ -65,13 +74,13 @@ def _neighbors(df: pd.DataFrame, r: int, c: int, up: int, down: int, left: int, 
             yield i, j
 
 def _pick_best_count(cands: List[int], max_allowed: int = 60) -> Optional[int]:
+    """Filtra None y fuera de rango; prioriza el mayor típico (evita 1 residuales)."""
     cands = [x for x in cands if x is not None and 0 <= x <= max_allowed]
     if not cands: 
         return None
-    # preferimos el más grande típico (p. ej. 4 frente a 1 residuales)
     return max(cands)
 
-# ------------------- Detectores robustos ------------------------
+# ------------------- Detectores por rótulos ---------------------
 def detect_delegacion(df: pd.DataFrame) -> Optional[str]:
     # Ej: "D35-Orotina"
     rx = re.compile(r"^\s*d\d{1,3}\s*[-–]\s*.+\s*$", re.IGNORECASE)
@@ -89,19 +98,17 @@ def detect_delegacion(df: pd.DataFrame) -> Optional[str]:
     return None
 
 def detect_lineas_accion(df: pd.DataFrame, debug: bool=False) -> Tuple[Optional[int], Optional[Tuple[int,int]]]:
-    # Ancla por rótulo
     hits = _find(df, r"\blineas?\s*de\s*accion\b")
     for (r,c) in hits:
-        # Busca cerca del rótulo números candidatos 0..60 sin %
-        cands, pos = [], None
+        cands = []
         for (i,j) in _neighbors(df, r, c, up=0, down=6, left=2, right=4):
-            val = _to_int(df.iat[i,j])
-            if val is not None:
-                cands.append((val, (i,j)))
-        if cands:
-            val, pos = max(cands, key=lambda t: t[0])
-            if debug: st.caption(f"Líneas de Acción tomado en {pos} = {val}")
-            return val, pos
+            cands.append(_to_int(df.iat[i,j]))
+        nums = [v for v in cands if v is not None]
+        if nums:
+            val = _pick_best_count(nums, max_allowed=60)
+            if debug and val is not None:
+                st.caption(f"Líneas de Acción detectadas: {val}")
+            return val, None
     return None, None
 
 def _row_has_all(row_vals: List[str], needed: List[str]) -> bool:
@@ -109,97 +116,141 @@ def _row_has_all(row_vals: List[str], needed: List[str]) -> bool:
     return all(any(k in cell for cell in normed) for k in needed)
 
 def detect_avance_indicadores(df: pd.DataFrame, debug: bool=False) -> Dict[str, Dict[str, Optional[float]]]:
+    """
+    Devuelve:
+      {'completos': {'n','%'}, 'con_actividades': {'n','%'}, 'sin_actividades': {'n','%'}}
+    - Encuentra fila con 'Completos | Con actividades | Sin actividades'
+    - Toma la primera fila numérica (sin %) debajo y la primera fila con % debajo
+    - Tolera mezcla n/% entre esas dos filas
+    """
     res = { "completos":{"n":None,"%":None},
             "con_actividades":{"n":None,"%":None},
             "sin_actividades":{"n":None,"%":None} }
+
     for r in range(df.shape[0]):
-        hdr = [str(x) if x is not None else "" for x in df.iloc[r,:].tolist()]
-        if _row_has_all(hdr, ["complet", "con actividades", "sin actividades"]):
-            nums = [str(x) if x is not None else "" for x in df.iloc[r+1,:].tolist()] if r+1<df.shape[0] else []
-            pcts = [str(x) if x is not None else "" for x in df.iloc[r+2,:].tolist()] if r+2<df.shape[0] else []
-            def pick(key):
-                idx = None
-                for j,h in enumerate(hdr):
-                    if key in _norm(h):
-                        idx = j; break
-                if idx is None: return None, None
-                n = _to_int(nums[idx]) if idx < len(nums) else None
-                p = _to_pct(pcts[idx]) if idx < len(pcts) else None
-                if n is None and idx < len(nums):
-                    p2 = _to_pct(nums[idx])
-                    if p2 is not None: p = p2
-                if p is None and idx < len(pcts):
-                    n2 = _to_int(pcts[idx])
-                    if n2 is not None: n = n2
-                return n, p
-            res["completos"]["n"], res["completos"]["%"] = pick("complet")
-            res["con_actividades"]["n"], res["con_actividades"]["%"] = pick("con actividades")
-            res["sin_actividades"]["n"], res["sin_actividades"]["%"] = pick("sin actividades")
-            if debug: st.caption(f"Avance fila {r}: {res}")
-            return res
+        row = [str(x) if x is not None else "" for x in df.iloc[r,:].tolist()]
+        if not row:
+            continue
+        normed = [_norm(x) for x in row]
+        if not (any("complet" in x for x in normed) and
+                any("con actividades" in x for x in normed) and
+                any("sin actividades" in x for x in normed)):
+            continue
+
+        # Mapear columna para cada encabezado
+        hdr_idx = {}
+        for j, h in enumerate(normed):
+            if "complet" in h and "completos" not in hdr_idx:
+                hdr_idx["completos"] = j
+            elif "con actividades" in h and "con_actividades" not in hdr_idx:
+                hdr_idx["con_actividades"] = j
+            elif "sin actividades" in h and "sin_actividades" not in hdr_idx:
+                hdr_idx["sin_actividades"] = j
+
+        # Primera fila numérica (sin %) debajo
+        num_row = None
+        rr = r + 1
+        while rr < df.shape[0]:
+            vals = [str(x) if x is not None else "" for x in df.iloc[rr,:].tolist()]
+            has_pct = any("%" in v for v in vals)
+            has_int = any(_to_int(v) is not None for v in vals)
+            if has_int and not has_pct:
+                num_row = vals
+                break
+            rr += 1
+
+        # Primera fila de porcentajes (con %) debajo
+        pct_row = None
+        rr2 = r + 1
+        while rr2 < df.shape[0]:
+            vals = [str(x) if x is not None else "" for x in df.iloc[rr2,:].tolist()]
+            if any("%" in v for v in vals):
+                pct_row = vals
+                break
+            rr2 += 1
+
+        for key, j in hdr_idx.items():
+            n = _to_int(num_row[j]) if (num_row and j < len(num_row)) else None
+            p = _to_pct(pct_row[j]) if (pct_row and j < len(pct_row)) else None
+            # Mezcla tolerada
+            if n is None and num_row and j < len(num_row):
+                p2 = _to_pct(num_row[j])
+                if p is None and p2 is not None:
+                    p = p2
+            if p is None and pct_row and j < len(pct_row):
+                n2 = _to_int(pct_row[j])
+                if n is None and n2 is not None:
+                    n = n2
+            res[key] = {"n": n, "%": p}
+
+        if debug:
+            st.caption(f"Avance detectado en fila {r}: {res}")
+        return res
+
     return res
 
 def detect_indicadores_categoria(df: pd.DataFrame, categoria: str, debug: bool=False) -> Tuple[Optional[int], Optional[str]]:
     """
     1) Busca el texto 'categoria' (Gobierno Local | Fuerza Pública)
-    2) Dentro del vecindario, localiza el rótulo 'Indicadores' y toma el número **encima** (misma o ±1 col)
-       como candidato (0..60, entero sin %).
-    3) Si no logra, intenta sumar la **última columna** de la tablita (que contiene cantidades puras).
+    2) Localiza 'Indicadores' cerca y toma el número grande adyacente (arriba/abajo ±1 col)
+    3) Si falla, suma la última cifra entera en filas con % (tablita de 3 filas)
     """
     anchors = _find(df, _norm(categoria))
     if not anchors:
         return None, "sin_ancla"
 
-    best_val, best_note = None, None
     for (ra, ca) in anchors:
-        # Paso 2: “Indicadores” cercano
+        # (1) Buscar rótulo "Indicadores" cerca
         inds = []
-        for (ri, ci) in _neighbors(df, ra, ca, up=0, down=15, left=0, right=12):
+        for (ri, ci) in _neighbors(df, ra, ca, up=0, down=18, left=0, right=18):
             if "indicadores" in _norm(df.iat[ri, ci]):
                 inds.append((ri, ci))
+
+        # (2) Número grande adyacente
         for (ri, ci) in inds:
             cands = []
-            for up in (1,2,3):
-                rr = ri - up
-                if rr < 0: break
-                for dc in (-1,0,1):
-                    cc = ci + dc
-                    if 0 <= cc < df.shape[1]:
-                        cands.append(_to_int(df.iat[rr, cc]))
-            val = _pick_best_count(cands, max_allowed=60)
+            for delta_r in (-2, -1, 1, 2):
+                rr = ri + delta_r
+                if 0 <= rr < df.shape[0]:
+                    for dc in (-1, 0, 1):
+                        cc = ci + dc
+                        if 0 <= cc < df.shape[1]:
+                            cands.append(_to_int(df.iat[rr, cc]))
+            val = _pick_best_count([v for v in cands if v is not None], max_allowed=60)
             if val is not None:
-                if debug: st.caption(f"{categoria}: Indicadores en {(ri,ci)} → {val}")
+                if debug: st.caption(f"{categoria}: número grande cerca de 'Indicadores' → {val}")
                 return val, "indicadores_label"
 
-        # Paso 3: sumar última col de la tablita (si existe)
-        # Buscamos filas con patrones de porcentaje en primera/segunda col y número puro al final
-        sum_cand = 0
-        found = False
-        for rr in range(ra, min(ra+12, df.shape[0])):
-            row = [df.iat[rr, cc] for cc in range(ca, min(ca+6, df.shape[1]))]
-            # detecta si hay un % en la fila (propio de esa tablita) y un entero al final
-            has_pct = any("%" in str(v) for v in row if v is not None)
+        # (3) Suma de última cifra entera por fila (en filas que tengan %)
+        sum_cand, found = 0, False
+        for rr in range(ra, min(ra + 15, df.shape[0])):
+            row = [df.iat[rr, cc] for cc in range(max(0, ca - 5), min(ca + 10, df.shape[1]))]
+            if not row: 
+                continue
+            if not any("%" in str(v) for v in row if v is not None):
+                continue
             last_int = None
             for v in reversed(row):
-                last_int = _to_int(v)
-                if last_int is not None:
+                vi = _to_int(v)
+                if vi is not None:
+                    last_int = vi
                     break
-            if has_pct and last_int is not None:
-                found = True
+            if last_int is not None:
                 sum_cand += last_int
+                found = True
         if found and 0 < sum_cand <= 60:
             if debug: st.caption(f"{categoria}: suma de tablita = {sum_cand}")
             return sum_cand, "tabla_sum"
 
-    return best_val, best_note
+    return None, "no_encontrado"
 
 def detect_total_indicadores(df: pd.DataFrame) -> Optional[int]:
     hits = _find(df, r"\btotal\s+de\s+indicadores\b")
     for (r,c) in hits:
         cands = []
-        for (i,j) in _neighbors(df, r, c, up=0, down=2, left=0, right=4):
+        for (i,j) in _neighbors(df, r, c, up=0, down=3, left=0, right=6):
             cands.append(_to_int(df.iat[i,j]))
-        val = _pick_best_count(cands, max_allowed=120)
+        val = _pick_best_count([x for x in cands if x is not None], max_allowed=120)
         if val is not None:
             return val
     return None
@@ -210,11 +261,11 @@ def process_file(upload, debug: bool=False) -> Dict:
 
     lineas, _ = detect_lineas_accion(df, debug=debug)
     avance = detect_avance_indicadores(df, debug=debug)
-    gl, gl_note = detect_indicadores_categoria(df, "gobierno local", debug=debug)
-    fp, fp_note = detect_indicadores_categoria(df, "fuerza publica", debug=debug)
+    gl, _ = detect_indicadores_categoria(df, "gobierno local", debug=debug)
+    fp, _ = detect_indicadores_categoria(df, "fuerza publica", debug=debug)
     total = detect_total_indicadores(df)
 
-    # Cross-check simple
+    # Cross-check básico con Total de Indicadores
     if total is not None and (gl is None or fp is None):
         if gl is not None and fp is None:
             fp = total - gl
@@ -246,12 +297,14 @@ st.title("📊 Lector de Matrices (Excel) → Resumen consolidado")
 with st.sidebar:
     st.header("Opciones")
     debug = st.toggle("Mostrar pistas de detección (debug)", value=False)
+
 st.markdown("""
 Sube tus matrices (.xlsx / .xlsm). La app detecta:
 - **Delegación**, **Líneas de Acción**
 - **Avance de Indicadores** (*Completos / Con actividades / Sin actividades*, con **n** y **%**)
-- **Indicadores** por **Gobierno Local** y **Fuerza Pública**  
+- **Indicadores** por **Gobierno Local** y **Fuerza Pública**
 - **Total de Indicadores** (si existe)
+
 y genera un **Excel consolidado** listo para descargar.
 """)
 
@@ -284,6 +337,7 @@ if uploads:
         order = list(rename.keys())
         df_out = df_out[order].rename(columns=rename)
 
+        # Formato de porcentaje
         for col in ["Completos (%)","Con actividades (%)","Sin actividades (%)"]:
             if col in df_out.columns:
                 df_out[col] = df_out[col].apply(lambda v: f"{v:.1f}%" if pd.notna(v) else None)
@@ -291,6 +345,7 @@ if uploads:
         st.subheader("Resumen previo")
         st.dataframe(df_out, use_container_width=True)
 
+        # Descargar Excel
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as w:
             df_out.to_excel(w, index=False, sheet_name="resumen")
@@ -307,3 +362,4 @@ if uploads:
             st.write(f"- {name}: {err}")
 else:
     st.info("Sube tus matrices para ver el resumen.")
+
