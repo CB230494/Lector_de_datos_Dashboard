@@ -25,7 +25,7 @@ def _to_int(x) -> Optional[int]:
     """Solo acepta enteros de 1–3 dígitos (evita '2025' y descarta celdas con '%')."""
     if x is None: return None
     s = str(x).strip()
-    if "%" in s:  # cantidades jamás llevan %
+    if "%" in s:
         return None
     digits = re.sub(r"[^\d-]", "", s)
     if not re.fullmatch(r"-?\d{1,3}", digits):
@@ -47,11 +47,9 @@ def _to_pct(x) -> Optional[float]:
     return max(0.0, min(100.0, v * 100.0))
 
 def _read_df(file) -> pd.DataFrame:
-    # header=None mantiene todo como data; dtype=str conserva formatos (%)
     return pd.read_excel(file, engine="openpyxl", header=None, dtype=str)
 
 def _find(df: pd.DataFrame, pattern: str) -> List[Tuple[int,int]]:
-    """Encuentra celdas cuyo texto normalizado matchee el patrón (regex)."""
     rx = re.compile(pattern)
     out = []
     for r in range(df.shape[0]):
@@ -73,7 +71,6 @@ def _neighbors(df: pd.DataFrame, r: int, c: int, up: int, down: int, left: int, 
             yield i, j
 
 def _pick_best_count(cands: List[int], max_allowed: int = 60) -> Optional[int]:
-    """Filtra None y fuera de rango; prioriza el mayor típico (evita 1 residuales)."""
     cands = [x for x in cands if x is not None and 0 <= x <= max_allowed]
     if not cands: 
         return None
@@ -81,14 +78,12 @@ def _pick_best_count(cands: List[int], max_allowed: int = 60) -> Optional[int]:
 
 # ------------------- Detectores por rótulos ---------------------
 def detect_delegacion(df: pd.DataFrame) -> Optional[str]:
-    # Ej: "D35-Orotina"
     rx = re.compile(r"^\s*d\d{1,3}\s*[-–]\s*.+\s*$", re.IGNORECASE)
     for r in range(min(15, df.shape[0])):
         for c in range(df.shape[1]):
             raw = df.iat[r,c]
             if raw and rx.match(str(raw)):
                 return str(raw).strip()
-    # Fallback por rótulo "delegación"
     hits = _find(df, r"\bdelegaci[oó]n\b")
     for (r,c) in hits:
         if c+1 < df.shape[1]:
@@ -97,7 +92,6 @@ def detect_delegacion(df: pd.DataFrame) -> Optional[str]:
     return None
 
 def detect_lineas_accion(df: pd.DataFrame, debug: bool=False) -> Optional[int]:
-    # Busca rótulo "Líneas de Acción" y recoge enteros cercanos; toma el mayor (evita 1 residuales)
     hits = _find(df, r"\blineas?\s*de\s*accion\b")
     for (r,c) in hits:
         cands = []
@@ -108,18 +102,15 @@ def detect_lineas_accion(df: pd.DataFrame, debug: bool=False) -> Optional[int]:
             st.caption(f"Líneas de Acción detectadas: {val}")
         if val is not None:
             return val
-    # Fallback: contar rótulos "Linea de Accion #"
     la_hits = _find(df, r"\blinea\s+de\s+accion\s*#")
     if la_hits:
         return len(la_hits)
     return None
 
-# -------- NUEVO: detección robusta de GL/FP y Avance por “lo visible” -----
+# -------- Detección robusta de GL/FP y Avance por “lo visible” -----
 def detect_indicator_rows(df: pd.DataFrame) -> List[int]:
-    """Devuelve los índices de fila que representan indicadores (GL o FP en la col que sea)."""
     rows = []
     for r in range(df.shape[0]):
-        # busca 'gl' o 'fp' en alguna celda de las primeras 5 columnas (títulos suelen estar a la izquierda)
         left_vals = [df.iat[r, c] for c in range(min(6, df.shape[1]))]
         left_norm = [_norm(v) for v in left_vals]
         if any(v == "gl" for v in left_norm) or any(v == "fp" for v in left_norm):
@@ -127,19 +118,16 @@ def detect_indicator_rows(df: pd.DataFrame) -> List[int]:
     return rows
 
 def detect_avance_columns(df: pd.DataFrame) -> List[int]:
-    """Devuelve las columnas que se llaman 'Avance' (los 4 trimestres)."""
     cols = []
     for r in range(df.shape[0]):
         row = [df.iat[r, c] for c in range(df.shape[1])]
         for c, v in enumerate(row):
             if "avance" in _norm(v):
                 cols.append(c)
-        # toma la primera fila que tenga 2+ 'Avance' y usa esas columnas
         if len(cols) >= 2:
             return sorted(list(set(cols)))
         else:
             cols = []
-    # fallback: intenta las posiciones típicas
     fallback = [10, 15, 20, 25]
     return [c for c in fallback if c < df.shape[1]]
 
@@ -169,7 +157,6 @@ def avance_counts(df: pd.DataFrame) -> Dict[str, int]:
             return "con_actividades"
         if any("sin actividades" in v for v in valsn):
             return "sin_actividades"
-        # si está vacío en todos → trátalo como sin actividades (ajustable)
         return "sin_actividades"
 
     for r in rows:
@@ -191,31 +178,25 @@ def detect_total_indicadores(df: pd.DataFrame) -> Optional[int]:
 def process_file(upload, debug: bool=False) -> Dict:
     df = _read_df(upload)
 
-    # Delegación y Líneas de Acción (como tenías)
     deleg = detect_delegacion(df)
     lineas = detect_lineas_accion(df, debug=debug)
 
-    # NUEVO: GL/FP por conteo de filas
     gl, fp = gl_fp_counts(df)
 
-    # NUEVO: Avance por columnas "Avance"
     avance_dict, total_ind = avance_counts(df)
     comp_n = avance_dict["completos"]
     con_n  = avance_dict["con_actividades"]
     sin_n  = avance_dict["sin_actividades"]
 
-    # Porcentajes
     def pct(n): 
         return round((n / total_ind) * 100.0, 1) if total_ind and n is not None else None
     comp_p = pct(comp_n)
     con_p  = pct(con_n)
     sin_p  = pct(sin_n)
 
-    # Cross-check con "Total de Indicadores" si existiera
     total_from_label = detect_total_indicadores(df)
     total_out = total_ind if total_ind else total_from_label
     if (gl == 0 or fp == 0) and total_out and gl + fp != total_out:
-        # si uno de los dos es 0, y tenemos total, intenta corregir
         if gl == 0 and fp > 0:
             gl = max(0, total_out - fp)
         elif fp == 0 and gl > 0:
@@ -272,21 +253,36 @@ if uploads:
 
     if rows:
         df_out = pd.DataFrame(rows)
+
+        # === Reordenación solicitada (solo cambia la vista y el Excel) ===
         rename = {
             "archivo":"Archivo",
             "delegacion":"Delegación",
             "lineas_accion":"Líneas de Acción",
+            "indicadores_gl":"Indicadores Gobierno Local",
+            "indicadores_fp":"Indicadores Fuerza Pública",
+            "indicadores_total":"Total Indicadores",
             "completos_n":"Completos (n)",
             "completos_pct":"Completos (%)",
             "conact_n":"Con actividades (n)",
             "conact_pct":"Con actividades (%)",
             "sinact_n":"Sin actividades (n)",
             "sinact_pct":"Sin actividades (%)",
-            "indicadores_gl":"Indicadores Gobierno Local",
-            "indicadores_fp":"Indicadores Fuerza Pública",
-            "indicadores_total":"Total Indicadores",
         }
-        order = list(rename.keys())
+        order = [
+            "archivo",
+            "delegacion",
+            "lineas_accion",
+            "indicadores_gl",
+            "indicadores_fp",
+            "indicadores_total",
+            "completos_n",
+            "completos_pct",
+            "conact_n",
+            "conact_pct",
+            "sinact_n",
+            "sinact_pct",
+        ]
         df_out = df_out[order].rename(columns=rename)
 
         # Formato %
@@ -314,4 +310,5 @@ if uploads:
             st.write(f"- {name}: {err}")
 else:
     st.info("Sube tus matrices para ver el resumen.")
+
 
