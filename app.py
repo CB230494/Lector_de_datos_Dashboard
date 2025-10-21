@@ -55,7 +55,7 @@ def _find(df: pd.DataFrame, pattern: str) -> List[Tuple[int,int]]:
     for r in range(df.shape[0]):
         for c in range(df.shape[1]):
             val = df.iat[r,c]
-            if val is None: 
+            if val is None:
                 continue
             if rx.search(_norm(val)):
                 out.append((r,c))
@@ -72,7 +72,7 @@ def _neighbors(df: pd.DataFrame, r: int, c: int, up: int, down: int, left: int, 
 
 def _pick_best_count(cands: List[int], max_allowed: int = 60) -> Optional[int]:
     cands = [x for x in cands if x is not None and 0 <= x <= max_allowed]
-    if not cands: 
+    if not cands:
         return None
     return max(cands)
 
@@ -117,6 +117,16 @@ def detect_indicator_rows(df: pd.DataFrame) -> List[int]:
             rows.append(r)
     return rows
 
+def detect_role_of_row(df: pd.DataFrame, r: int) -> Optional[str]:
+    """Devuelve 'gl', 'fp' o None según el contenido a la izquierda."""
+    left_vals = [df.iat[r, c] for c in range(min(6, df.shape[1]))]
+    left_norm = [_norm(v) for v in left_vals]
+    if any(v == "gl" for v in left_norm):
+        return "gl"
+    if any(v == "fp" for v in left_norm):
+        return "fp"
+    return None
+
 def detect_avance_columns(df: pd.DataFrame) -> List[int]:
     cols = []
     for r in range(df.shape[0]):
@@ -128,6 +138,7 @@ def detect_avance_columns(df: pd.DataFrame) -> List[int]:
             return sorted(list(set(cols)))
         else:
             cols = []
+    # Fallback razonable si no se detectan rótulos "Avance"
     fallback = [10, 15, 20, 25]
     return [c for c in fallback if c < df.shape[1]]
 
@@ -135,33 +146,53 @@ def gl_fp_counts(df: pd.DataFrame) -> Tuple[int, int]:
     rows = detect_indicator_rows(df)
     gl = fp = 0
     for r in rows:
-        left_vals = [df.iat[r, c] for c in range(min(6, df.shape[1]))]
-        left_norm = [_norm(v) for v in left_vals]
-        if any(v == "gl" for v in left_norm):
+        role = detect_role_of_row(df, r)
+        if role == "gl":
             gl += 1
-        elif any(v == "fp" for v in left_norm):
+        elif role == "fp":
             fp += 1
     return gl, fp
 
-def avance_counts(df: pd.DataFrame) -> Dict[str, int]:
+def _row_status_from_avance(df: pd.DataFrame, r: int, avance_cols: List[int]) -> str:
+    vals = [df.iat[r, c] for c in avance_cols]
+    valsn = [_norm(v) for v in vals]
+    if any("complet" in v for v in valsn):
+        return "completos"
+    if any("con actividades" in v for v in valsn):
+        return "con_actividades"
+    if any("sin actividades" in v for v in valsn):
+        return "sin_actividades"
+    return "sin_actividades"
+
+def avance_counts(df: pd.DataFrame) -> Tuple[Dict[str,int], int]:
+    """Conteo global (todas las filas de indicadores)."""
     rows = detect_indicator_rows(df)
     avance_cols = detect_avance_columns(df)
     counts = {"completos": 0, "con_actividades": 0, "sin_actividades": 0}
+    for r in rows:
+        counts[_row_status_from_avance(df, r, avance_cols)] += 1
+    return counts, len(rows)
 
-    def row_status(r: int) -> str:
-        vals = [df.iat[r, c] for c in avance_cols]
-        valsn = [_norm(v) for v in vals]
-        if any("complet" in v for v in valsn):
-            return "completos"
-        if any("con actividades" in v for v in valsn):
-            return "con_actividades"
-        if any("sin actividades" in v for v in valsn):
-            return "sin_actividades"
-        return "sin_actividades"
+def avance_counts_by_role(df: pd.DataFrame) -> Tuple[Dict[str,int], int, Dict[str,int], int]:
+    """Desglose por rol → (GL_counts, n_gl, FP_counts, n_fp)."""
+    rows = detect_indicator_rows(df)
+    avance_cols = detect_avance_columns(df)
+
+    gl_counts = {"completos": 0, "con_actividades": 0, "sin_actividades": 0}
+    fp_counts = {"completos": 0, "con_actividades": 0, "sin_actividades": 0}
+    n_gl = n_fp = 0
 
     for r in rows:
-        counts[row_status(r)] += 1
-    return counts, len(rows)
+        role = detect_role_of_row(df, r)
+        stt = _row_status_from_avance(df, r, avance_cols)
+        if role == "gl":
+            gl_counts[stt] += 1
+            n_gl += 1
+        elif role == "fp":
+            fp_counts[stt] += 1
+            n_fp += 1
+
+    return gl_counts, n_gl, fp_counts, n_fp
 
 def detect_total_indicadores(df: pd.DataFrame) -> Optional[int]:
     hits = _find(df, r"\btotal\s+de\s+indicadores\b")
@@ -183,19 +214,42 @@ def process_file(upload, debug: bool=False) -> Dict:
 
     gl, fp = gl_fp_counts(df)
 
+    # Global
     avance_dict, total_ind = avance_counts(df)
     comp_n = avance_dict["completos"]
     con_n  = avance_dict["con_actividades"]
     sin_n  = avance_dict["sin_actividades"]
 
-    def pct(n): 
-        return round((n / total_ind) * 100.0, 1) if total_ind and n is not None else None
-    comp_p = pct(comp_n)
-    con_p  = pct(con_n)
-    sin_p  = pct(sin_n)
+    def pct(n, d):
+        return round((n / d) * 100.0, 1) if d and n is not None else None
+
+    comp_p = pct(comp_n, total_ind)
+    con_p  = pct(con_n,  total_ind)
+    sin_p  = pct(sin_n,  total_ind)
+
+    # --- NUEVO: desglose por GL y FP ---
+    gl_counts, n_gl, fp_counts, n_fp = avance_counts_by_role(df)
+
+    gl_comp_n = gl_counts["completos"]
+    gl_con_n  = gl_counts["con_actividades"]
+    gl_sin_n  = gl_counts["sin_actividades"]
+
+    gl_comp_p = pct(gl_comp_n, n_gl)
+    gl_con_p  = pct(gl_con_n,  n_gl)
+    gl_sin_p  = pct(gl_sin_n,  n_gl)
+
+    fp_comp_n = fp_counts["completos"]
+    fp_con_n  = fp_counts["con_actividades"]
+    fp_sin_n  = fp_counts["sin_actividades"]
+
+    fp_comp_p = pct(fp_comp_n, n_fp)
+    fp_con_p  = pct(fp_con_n,  n_fp)
+    fp_sin_p  = pct(fp_sin_n,  n_fp)
 
     total_from_label = detect_total_indicadores(df)
     total_out = total_ind if total_ind else total_from_label
+
+    # Ajuste si falta un lado (manteniendo tu lógica original)
     if (gl == 0 or fp == 0) and total_out and gl + fp != total_out:
         if gl == 0 and fp > 0:
             gl = max(0, total_out - fp)
@@ -207,6 +261,7 @@ def process_file(upload, debug: bool=False) -> Dict:
         "delegacion": deleg,
         "lineas_accion": lineas,
 
+        # Global (se conserva tal cual)
         "completos_n": comp_n,
         "completos_pct": comp_p,
         "conact_n": con_n,
@@ -214,13 +269,35 @@ def process_file(upload, debug: bool=False) -> Dict:
         "sinact_n": sin_n,
         "sinact_pct": sin_p,
 
+        # Indicadores por rol (conteos)
         "indicadores_gl": gl if gl is not None else None,
+
+        # --- NUEVAS 6 columnas GL (n y %) ---
+        "gl_completos_n": gl_comp_n,
+        "gl_completos_pct": gl_comp_p,
+        "gl_conact_n": gl_con_n,
+        "gl_conact_pct": gl_con_p,
+        "gl_sinact_n": gl_sin_n,
+        "gl_sinact_pct": gl_sin_p,
+
         "indicadores_fp": fp if fp is not None else None,
+
+        # --- NUEVAS 6 columnas FP (n y %) ---
+        "fp_completos_n": fp_comp_n,
+        "fp_completos_pct": fp_comp_p,
+        "fp_conact_n": fp_con_n,
+        "fp_conact_pct": fp_con_p,
+        "fp_sinact_n": fp_sin_n,
+        "fp_sinact_pct": fp_sin_p,
+
         "indicadores_total": total_out if total_out is not None else (gl + fp if (gl or fp) else None),
     }
 
     if debug:
-        st.caption(f"[DEBUG] Avance cols: {detect_avance_columns(df)} | rows GL/FP: {gl}+{fp}={gl+fp}")
+        st.caption(
+            f"[DEBUG] Avance cols: {detect_avance_columns(df)} | rows GL/FP: {gl}+{fp}={gl+fp} | "
+            f"n_gl={n_gl} n_fp={n_fp}"
+        )
     return out
 
 # --------------------------- UI --------------------------------
@@ -235,7 +312,7 @@ st.markdown("""
 Sube tus matrices (.xlsx / .xlsm). La app detecta:
 - **Delegación**, **Líneas de Acción**
 - **Avance de Indicadores** (*Completos / Con actividades / Sin actividades*, con **n** y **%**, evaluado por fila de indicador y columnas **Avance**)
-- **Indicadores** por **Gobierno Local** y **Fuerza Pública** (conteo de filas GL/FP)
+- **Indicadores** por **Gobierno Local** y **Fuerza Pública** (conteo de filas GL/FP) **y su desglose por estado (n y %)** ← *(nuevo)*
 - **Total de Indicadores** (si existe)
 
 y genera un **Excel consolidado** listo para descargar.
@@ -254,14 +331,35 @@ if uploads:
     if rows:
         df_out = pd.DataFrame(rows)
 
-        # === Reordenación solicitada (solo cambia la vista y el Excel) ===
+        # === Reordenación (se mantiene) + inserción de nuevas columnas ===
         rename = {
             "archivo":"Archivo",
             "delegacion":"Delegación",
             "lineas_accion":"Líneas de Acción",
+
             "indicadores_gl":"Indicadores Gobierno Local",
+
+            # --- GL (nuevas 6) ---
+            "gl_completos_n":"GL Completos (n)",
+            "gl_completos_pct":"GL Completos (%)",
+            "gl_conact_n":"GL Con actividades (n)",
+            "gl_conact_pct":"GL Con actividades (%)",
+            "gl_sinact_n":"GL Sin actividades (n)",
+            "gl_sinact_pct":"GL Sin actividades (%)",
+
             "indicadores_fp":"Indicadores Fuerza Pública",
+
+            # --- FP (nuevas 6) ---
+            "fp_completos_n":"FP Completos (n)",
+            "fp_completos_pct":"FP Completos (%)",
+            "fp_conact_n":"FP Con actividades (n)",
+            "fp_conact_pct":"FP Con actividades (%)",
+            "fp_sinact_n":"FP Sin actividades (n)",
+            "fp_sinact_pct":"FP Sin actividades (%)",
+
             "indicadores_total":"Total Indicadores",
+
+            # Global (se conservan al final para referencia)
             "completos_n":"Completos (n)",
             "completos_pct":"Completos (%)",
             "conact_n":"Con actividades (n)",
@@ -269,24 +367,41 @@ if uploads:
             "sinact_n":"Sin actividades (n)",
             "sinact_pct":"Sin actividades (%)",
         }
+
         order = [
             "archivo",
             "delegacion",
             "lineas_accion",
+
             "indicadores_gl",
+            # --- aquí van las 6 de GL ---
+            "gl_completos_n","gl_completos_pct",
+            "gl_conact_n","gl_conact_pct",
+            "gl_sinact_n","gl_sinact_pct",
+
             "indicadores_fp",
+            # --- aquí van las 6 de FP ---
+            "fp_completos_n","fp_completos_pct",
+            "fp_conact_n","fp_conact_pct",
+            "fp_sinact_n","fp_sinact_pct",
+
             "indicadores_total",
-            "completos_n",
-            "completos_pct",
-            "conact_n",
-            "conact_pct",
-            "sinact_n",
-            "sinact_pct",
+
+            # Global (al final, sin mover tu lógica)
+            "completos_n","completos_pct",
+            "conact_n","conact_pct",
+            "sinact_n","sinact_pct",
         ]
+
         df_out = df_out[order].rename(columns=rename)
 
         # Formato %
-        for col in ["Completos (%)","Con actividades (%)","Sin actividades (%)"]:
+        pct_cols = [
+            "GL Completos (%)","GL Con actividades (%)","GL Sin actividades (%)",
+            "FP Completos (%)","FP Con actividades (%)","FP Sin actividades (%)",
+            "Completos (%)","Con actividades (%)","Sin actividades (%)",
+        ]
+        for col in pct_cols:
             if col in df_out.columns:
                 df_out[col] = df_out[col].apply(lambda v: f"{v:.1f}%" if pd.notna(v) else None)
 
