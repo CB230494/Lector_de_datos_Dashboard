@@ -485,7 +485,7 @@ COLOR_AZUL_H = "#1F4E79"
 
 # === Gráfico ahora con fondo BLANCO ===
 def _bar_avance(pcts_tuple, title=""):
-    labels = ["Sin Actividades", "Con Actividades", "Cumplida"]
+    labels = ["Sin actividades", "Con actividades", "Cumplida"]
     values = list(pcts_tuple)
     colors = [COLOR_ROJO, COLOR_AMARIL, COLOR_VERDE]
 
@@ -514,13 +514,13 @@ def _panel_tres(col, titulo, n_rojo, p_rojo, n_amar, p_amar, n_verde, p_verde, t
         c1.markdown(f"""
             <div style="background:{COLOR_ROJO};color:white;text-align:center;padding:10px;border:1px solid #e3e3e3;">
               <div style="font-size:36px;font-weight:800;line-height:1;">{int(n_rojo)}</div>
-              <div style="font-size:13px;">Sin</div>
+              <div style="font-size:13px;">Sin actividades</div>
               <div style="font-size:16px;font-weight:700;">{p_rojo:.0f}%</div>
             </div>""", unsafe_allow_html=True)
         c2.markdown(f"""
             <div style="background:{COLOR_AMARIL};color:#111;text-align:center;padding:10px;border:1px solid #e3e3e3;">
               <div style="font-size:36px;font-weight:800;line-height:1;">{int(n_amar)}</div>
-              <div style="font-size:13px;">Con</div>
+              <div style="font-size:13px;">Con actividades</div>
               <div style="font-size:16px;font-weight:700;">{p_amar:.0f}%</div>
             </div>""", unsafe_allow_html=True)
         c3.markdown(f"""
@@ -548,13 +548,13 @@ def _resumen_avance(col, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind):
         grid[0].markdown(f"""
             <div style="background:{COLOR_ROJO};color:white;text-align:center;padding:10px;border:1px solid #e3e3e3;">
               <div style="font-size:36px;font-weight:800;line-height:1;">{int(sin_n)}</div>
-              <div style="font-size:13px;">Sin Actividades</div>
+              <div style="font-size:13px;">Sin actividades</div>
               <div style="font-size:16px;font-weight:700;">{sin_p:.0f}%</div>
             </div>""", unsafe_allow_html=True)
         grid[1].markdown(f"""
             <div style="background:{COLOR_AMARIL};color:#111;text-align:center;padding:10px;border:1px solid #e3e3e3;">
               <div style="font-size:36px;font-weight:800;line-height:1;">{int(con_n)}</div>
-              <div style="font-size:13px;">Con Actividades</div>
+              <div style="font-size:13px;">Con actividades</div>
               <div style="font-size:16px;font-weight:700;">{con_p:.0f}%</div>
             </div>""", unsafe_allow_html=True)
         grid[2].markdown(f"""
@@ -650,7 +650,7 @@ def _pick_prov_column(df: pd.DataFrame) -> Optional[str]:
 # ============================= MAIN DASHBOARD =============================
 if dash_file:
     try:
-        df_dash = pd.read_excel(dash_file, sheet_name("resumen"))
+        df_dash = pd.read_excel(dash_file, sheet_name="resumen")
     except Exception:
         df_dash = pd.read_excel(dash_file)
 
@@ -782,10 +782,10 @@ if dash_file:
 
     # =================== TAB 3: SOLO GOBIERNO LOCAL (PROVINCIA) ==========
     with tabs[2]:
-        st.subheader("Gobierno Local (filtrar por Provincia y Delegación)")
+        st.subheader("Gobierno Local (filtrar por Provincia)")
 
         st.markdown("**Carga un Excel** que contenga al menos: `Provincia`, `Delegación` y las columnas GL (`Indicadores Gobierno Local`, `GL ...`).")
-        gl_file = st.file_uploader("Cargar Excel para filtro de Gobierno Local", type=["xlsx"], key="gl_excel")
+        gl_file = st.file_uploader("Cargar Excel para filtro de Gobierno Local (solo Provincia)", type=["xlsx"], key="gl_excel")
 
         if gl_file:
             try:
@@ -799,22 +799,18 @@ if dash_file:
             prov_col = _pick_prov_column(df_gl)
             if not prov_col:
                 st.warning("No se detectó una columna de **Provincia**. Renombra tu columna a algo como 'Provincia'.")
-            elif "Delegación" not in df_gl.columns:
-                st.warning("No se encontró la columna **Delegación** en el Excel.")
             else:
-                # Filtros
+                # === Filtro SOLO por Provincia ===
                 provincias = sorted(df_gl[prov_col].dropna().astype(str).unique().tolist())
-                sel_prov = st.selectbox("Provincia", provincias, index=0, key="sel_prov")
+                sel_prov = st.selectbox("Provincia", provincias, index=0, key="sel_prov_only")
 
                 df_prov = df_gl[df_gl[prov_col].astype(str) == sel_prov]
-                delegs = sorted(df_prov["Delegación"].dropna().astype(str).unique().tolist())
-                sel_deleg = st.selectbox("Delegación", delegs, index=0, key="sel_deleg_gl")
 
-                dsel = df_prov[df_prov["Delegación"] == sel_deleg]
-                if dsel.empty:
-                    st.info("No hay registros para esa combinación.")
+                if df_prov.empty:
+                    st.info("No hay registros para esa provincia.")
                 else:
-                    agg = dsel.select_dtypes(include=[np.number]).sum(numeric_only=True)
+                    # Agrega TODAS las delegaciones de la provincia
+                    agg = df_prov.select_dtypes(include=[np.number]).sum(numeric_only=True)
 
                     # TOTAL SOLO GL
                     gl_tot = agg.get("Indicadores Gobierno Local", 0)
@@ -832,7 +828,7 @@ if dash_file:
 
                     # Header
                     st.markdown(
-                        f"<h3 style='text-align:center;margin-top:0;color:#111;'>{sel_prov} — {sel_deleg}</h3>",
+                        f"<h3 style='text-align:center;margin-top:0;color:#111;'>Provincia: {sel_prov}</h3>",
                         unsafe_allow_html=True
                     )
 
@@ -845,8 +841,6 @@ if dash_file:
                     # Panel GL (arriba) — SOLO Gobierno Local
                     _panel_tres(st.container(), "Gobierno Local",
                                 gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
-
-                    # Nota: no mostramos FP ni el resumen global aquí, porque esta pestaña es exclusiva de GL.
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
 
