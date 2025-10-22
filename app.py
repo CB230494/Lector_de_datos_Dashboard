@@ -439,7 +439,8 @@ with st.expander("ℹ️ Instrucciones", expanded=True):
     st.markdown("""
     1) **Carga** aquí el **Excel consolidado** que genera esta misma app (hoja `resumen`).  
     2) Navega por las **pestañas**: *Por Delegación* y *Por Dirección Regional*.  
-    3) Los colores y cuadros replican tu layout: **Rojo** (Sin actividades), **Amarillo** (Con actividades), **Verde** (Cumplida).
+    3) Colores: **Rojo** (Sin actividades), **Amarillo** (Con actividades), **Verde** (Cumplida).  
+    4) En ambos tabs: **arriba GL/FP**, **abajo Avance de Indicadores**.
     """)
 
 dash_file = st.file_uploader("Cargar Excel consolidado (resumen_matrices.xlsx)", type=["xlsx"], key="dash_excel")
@@ -468,7 +469,7 @@ def _big_number(value, label, helptext=None):
         st.markdown(f"""
         <div style="text-align:center;padding:8px 0;">
             <div style="font-size:54px;font-weight:800;line-height:1;margin:0;">{value}</div>
-            <div style="font-size:14px;color:#555;margin-top:4px;">{label}</div>
+            <div style="font-size:14px;color:#bbb;margin-top:4px;">{label}</div>
         </div>
         """, unsafe_allow_html=True)
         if helptext:
@@ -488,8 +489,8 @@ def _bar_avance(pcts_tuple, title=""):
     colors = [COLOR_ROJO, COLOR_AMARIL, COLOR_VERDE]
 
     fig, ax = plt.subplots(figsize=(5.5, 3.5))
-    fig.patch.set_facecolor("#000000")   # lienzo
-    ax.set_facecolor("#000000")          # área de ejes
+    fig.patch.set_facecolor("#000000")
+    ax.set_facecolor("#000000")
     ax.bar(labels, values, color=colors)
     ax.set_ylim(0, 100)
     ax.set_ylabel("%", color="white")
@@ -510,28 +511,28 @@ def _panel_tres(col, titulo, n_rojo, p_rojo, n_amar, p_amar, n_verde, p_verde, t
         """, unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
         c1.markdown(f"""
-            <div style="background:{COLOR_ROJO};color:white;text-align:center;padding:8px;border:1px solid #ddd;">
+            <div style="background:{COLOR_ROJO};color:white;text-align:center;padding:8px;border:1px solid #222;">
               <div style="font-size:36px;font-weight:800;line-height:1;">{int(n_rojo)}</div>
               <div style="font-size:13px;">Sin</div>
               <div style="font-size:16px;font-weight:700;">{p_rojo:.0f}%</div>
             </div>""", unsafe_allow_html=True)
         c2.markdown(f"""
-            <div style="background:{COLOR_AMARIL};color:black;text-align:center;padding:8px;border:1px solid #ddd;">
+            <div style="background:{COLOR_AMARIL};color:black;text-align:center;padding:8px;border:1px solid #222;">
               <div style="font-size:36px;font-weight:800;line-height:1;">{int(n_amar)}</div>
               <div style="font-size:13px;">Con</div>
               <div style="font-size:16px;font-weight:700;">{p_amar:.0f}%</div>
             </div>""", unsafe_allow_html=True)
         c3.markdown(f"""
-            <div style="background:{COLOR_VERDE};color:black;text-align:center;padding:8px;border:1px solid #ddd;">
+            <div style="background:{COLOR_VERDE};color:black;text-align:center;padding:8px;border:1px solid #222;">
               <div style="font-size:36px;font-weight:800;line-height:1;">{int(n_verde)}</div>
               <div style="font-size:13px;">Cumplida</div>
               <div style="font-size:16px;font-weight:700;">{p_verde:.0f}%</div>
             </div>""", unsafe_allow_html=True)
 
         st.markdown(
-            f"""<div style="text-align:center;border:1px solid #ddd;border-top:0;padding:8px 0;border-radius:0 0 6px 6px;">
+            f"""<div style="text-align:center;border:1px solid #222;border-top:0;padding:8px 0;border-radius:0 0 6px 6px;background:#0b0b0b;color:#fff;">
             <div style="font-size:40px;font-weight:800;line-height:1;">{int(total)}</div>
-            <div style="font-size:13px;color:#333;">Total</div></div>""",
+            <div style="font-size:13px;color:#bbb;">Total</div></div>""",
             unsafe_allow_html=True
         )
 
@@ -544,26 +545,26 @@ def _resumen_avance(col, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind):
 
         grid = st.columns(3)
         grid[0].markdown(f"""
-            <div style="background:{COLOR_ROJO};color:white;text-align:center;padding:8px;border:1px solid #ddd;">
+            <div style="background:{COLOR_ROJO};color:white;text-align:center;padding:8px;border:1px solid #222;">
               <div style="font-size:36px;font-weight:800;line-height:1;">{int(sin_n)}</div>
               <div style="font-size:13px;">Sin Actividades</div>
               <div style="font-size:16px;font-weight:700;">{sin_p:.0f}%</div>
             </div>""", unsafe_allow_html=True)
         grid[1].markdown(f"""
-            <div style="background:{COLOR_AMARIL};color:black;text-align:center;padding:8px;border:1px solid #ddd;">
+            <div style="background:{COLOR_AMARIL};color:black;text-align:center;padding:8px;border:1px solid #222;">
               <div style="font-size:36px;font-weight:800;line-height:1;">{int(con_n)}</div>
               <div style="font-size:13px;">Con Actividades</div>
               <div style="font-size:16px;font-weight:700;">{con_p:.0f}%</div>
             </div>""", unsafe_allow_html=True)
         grid[2].markdown(f"""
-            <div style="background:{COLOR_VERDE};color:black;text-align:center;padding:8px;border:1px solid #ddd;">
+            <div style="background:{COLOR_VERDE};color:black;text-align:center;padding:8px;border:1px solid #222;">
               <div style="font-size:36px;font-weight:800;line-height:1;">{int(comp_n)}</div>
               <div style="font-size:13px;">Cumplida</div>
               <div style="font-size:16px;font-weight:700;">{comp_p:.0f}%</div>
             </div>""", unsafe_allow_html=True)
 
         st.markdown(
-            f"""<div style="text-align:center;border:1px solid #ddd;border-top:0;padding:8px 0;border-radius:0 0 6px 6px;">
+            f"""<div style="text-align:center;border:1px solid #222;border-top:0;padding:8px 0;border-radius:0 0 6px 6px;background:#0b0b0b;color:#fff;">
             <div style="font-size:18px;font-weight:700;">Total de Indicadores: {int(total_ind)}</div></div>""",
             unsafe_allow_html=True
         )
@@ -588,13 +589,25 @@ def _ensure_numeric(df):
             df[c] = df[c].apply(lambda v: _to_num_safe(v, pct=True))
     return df
 
-def _infer_dr(name: str) -> str:
+# === DR desde columna del Excel (si existe) o fallback desde "Delegación" ===
+_DR_COL_CANDIDATAS = [
+    "DirecciónRegional","DireccionRegional","Dirección Regional","Direccion Regional",
+    "DR","Region","Región","Regional","Dirección","Direccion"
+]
+
+def _infer_dr_from_delegacion(name: str) -> str:
     if not isinstance(name, str):
         return "Sin DR / No identificado"
     m = re.search(r"(DR-\s*\d+\S*)", name, flags=re.IGNORECASE)
     if m:
         return m.group(1).replace(" ", "")
     return "Sin DR / No identificado"
+
+def _pick_dr_column(df: pd.DataFrame) -> str:
+    for c in _DR_COL_CANDIDATAS:
+        if c in df.columns:
+            return c
+    return None
 
 # ============================= MAIN DASHBOARD =============================
 if dash_file:
@@ -603,19 +616,16 @@ if dash_file:
     except Exception:
         df_dash = pd.read_excel(dash_file)
 
-    # Aviso si faltan algunas columnas (no bloquea)
-    faltantes = [c for c in [
-        "Delegación","Líneas de Acción",
-        "GL Completos (n)","GL Con actividades (n)","GL Sin actividades (n)",
-        "FP Completos (n)","FP Con actividades (n)","FP Sin actividades (n)",
-        "Completos (n)","Con actividades (n)","Sin actividades (n)",
-        "Indicadores Gobierno Local","Indicadores Fuerza Pública","Total Indicadores"
-    ] if c not in df_dash.columns]
-    if faltantes:
-        st.warning("El Excel no trae algunas columnas esperadas: " + ", ".join(faltantes))
-
     df_dash = _ensure_numeric(df_dash.copy())
-    df_dash["DR_inferida"] = df_dash["Delegación"].apply(_infer_dr)
+
+    # Elegimos la columna DR si existe; si no, inferimos desde "Delegación"
+    dr_col = _pick_dr_column(df_dash)
+    if dr_col:
+        # Normaliza texto (quita dobles espacios)
+        df_dash["DR_inferida"] = df_dash[dr_col].astype(str).str.replace(r"\s+", " ", regex=True).str.strip()
+        df_dash.loc[df_dash["DR_inferida"].isin(["", "nan", "None"]), "DR_inferida"] = "Sin DR / No identificado"
+    else:
+        df_dash["DR_inferida"] = df_dash.get("Delegación", "").apply(_infer_dr_from_delegacion)
 
     tabs = st.tabs(["🏢 Por Delegación", "🗺️ Por Dirección Regional"])
 
@@ -644,38 +654,32 @@ if dash_file:
 
             sin_p, con_p, comp_p = _pct(sin_n, total_ind), _pct(con_n, total_ind), _pct(comp_n, total_ind)
 
+            # Título + gráfica + líneas de acción
             st.markdown(f"<h3 style='text-align:center;margin-top:0;'>{sel}</h3>", unsafe_allow_html=True)
             _bar_avance((sin_p, con_p, comp_p), title="Avance (%)")
             _big_number(int(agg.get("Líneas de Acción", 0)), "Líneas de Acción")
 
-            col_left, col_right = st.columns([1.2, 1.2])
-            _resumen_avance(col_left, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
-
-            # Panel Gobierno Local
+            # ── ARRIBA: GL y FP ──
+            top_gl, top_fp = st.columns(2)
             gl_tot = agg.get("Indicadores Gobierno Local", 0)
-            gl_sin_n  = agg.get("GL Sin actividades (n)", 0)
-            gl_con_n  = agg.get("GL Con actividades (n)", 0)
-            gl_comp_n = agg.get("GL Completos (n)", 0)
-            gl_sin_p  = _pct(gl_sin_n, gl_tot)
-            gl_con_p  = _pct(gl_con_n, gl_tot)
-            gl_comp_p = _pct(gl_comp_n, gl_tot)
-            _panel_tres(col_right, "Gobierno Local", gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
+            gl_sin_n  = agg.get("GL Sin actividades (n)", 0); gl_con_n  = agg.get("GL Con actividades (n)", 0); gl_comp_n = agg.get("GL Completos (n)", 0)
+            gl_sin_p  = _pct(gl_sin_n, gl_tot);                gl_con_p  = _pct(gl_con_n, gl_tot);                gl_comp_p = _pct(gl_comp_n, gl_tot)
+            _panel_tres(top_gl, "Gobierno Local", gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
 
-            # Panel Fuerza Pública (⚠️ contenedor propio; no usar `st` en `with`)
             fp_tot = agg.get("Indicadores Fuerza Pública", 0)
-            fp_sin_n  = agg.get("FP Sin actividades (n)", 0)
-            fp_con_n  = agg.get("FP Con actividades (n)", 0)
-            fp_comp_n = agg.get("FP Completos (n)", 0)
-            fp_sin_p  = _pct(fp_sin_n, fp_tot)
-            fp_con_p  = _pct(fp_con_n, fp_tot)
-            fp_comp_p = _pct(fp_comp_n, fp_tot)
-            col_right_fp = st.container()
-            _panel_tres(col_right_fp, "Fuerza Pública", fp_sin_n, fp_sin_p, fp_con_n, fp_con_p, fp_comp_n, fp_comp_p, fp_tot)
+            fp_sin_n  = agg.get("FP Sin actividades (n)", 0); fp_con_n  = agg.get("FP Con actividades (n)", 0); fp_comp_n = agg.get("FP Completos (n)", 0)
+            fp_sin_p  = _pct(fp_sin_n, fp_tot);               fp_con_p  = _pct(fp_con_n, fp_tot);                fp_comp_p = _pct(fp_comp_n, fp_tot)
+            _panel_tres(top_fp, "Fuerza Pública", fp_sin_n, fp_sin_p, fp_con_n, fp_con_p, fp_comp_n, fp_comp_p, fp_tot)
+
+            # ── ABAJO: Avance de Indicadores (ancho) ──
+            bottom = st.container()
+            _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
     # =================== TAB 2: POR DIRECCIÓN REGIONAL ===================
     with tabs[1]:
         st.subheader("Avance por Dirección Regional (DR)")
-        drs = sorted(df_dash["DR_inferida"].unique().tolist())
+
+        drs = sorted(df_dash["DR_inferida"].astype(str).unique().tolist())
         sel_dr = st.selectbox("Dirección Regional", drs, index=0, key="sel_dr")
 
         df_dr = df_dash[df_dash["DR_inferida"] == sel_dr]
@@ -701,29 +705,20 @@ if dash_file:
             _bar_avance((sin_p, con_p, comp_p), title="Avance (%)")
             _big_number(int(agg.get("Líneas de Acción", 0)), "Líneas de Acción")
 
-            col_left, col_right = st.columns([1.2, 1.2])
-            _resumen_avance(col_left, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
-
-            # GL por DR
+            # ── ARRIBA: GL y FP ──
+            top_gl, top_fp = st.columns(2)
             gl_tot = agg.get("Indicadores Gobierno Local", 0)
-            gl_sin_n  = agg.get("GL Sin actividades (n)", 0)
-            gl_con_n  = agg.get("GL Con actividades (n)", 0)
-            gl_comp_n = agg.get("GL Completos (n)", 0)
-            gl_sin_p  = _pct(gl_sin_n, gl_tot)
-            gl_con_p  = _pct(gl_con_n, gl_tot)
-            gl_comp_p = _pct(gl_comp_n, gl_tot)
-            _panel_tres(col_right, "Gobierno Local", gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
+            gl_sin_n  = agg.get("GL Sin actividades (n)", 0); gl_con_n  = agg.get("GL Con actividades (n)", 0); gl_comp_n = agg.get("GL Completos (n)", 0)
+            gl_sin_p  = _pct(gl_sin_n, gl_tot);               gl_con_p  = _pct(gl_con_n, gl_tot);                gl_comp_p = _pct(gl_comp_n, gl_tot)
+            _panel_tres(top_gl, "Gobierno Local", gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
 
-            # FP por DR (⚠️ contenedor propio)
             fp_tot = agg.get("Indicadores Fuerza Pública", 0)
-            fp_sin_n  = agg.get("FP Sin actividades (n)", 0)
-            fp_con_n  = agg.get("FP Con actividades (n)", 0)
-            fp_comp_n = agg.get("FP Completos (n)", 0)
-            fp_sin_p  = _pct(fp_sin_n, fp_tot)
-            fp_con_p  = _pct(fp_con_n, fp_tot)
-            fp_comp_p = _pct(fp_comp_n, fp_tot)
-            col_right_below = st.container()
-            _panel_tres(col_right_below, "Fuerza Pública", fp_sin_n, fp_sin_p, fp_con_n, fp_con_p, fp_comp_n, fp_comp_p, fp_tot)
+            fp_sin_n  = agg.get("FP Sin actividades (n)", 0); fp_con_n  = agg.get("FP Con actividades (n)", 0); fp_comp_n = agg.get("FP Completos (n)", 0)
+            fp_sin_p  = _pct(fp_sin_n, fp_tot);               fp_con_p  = _pct(fp_con_n, fp_tot);                fp_comp_p = _pct(fp_comp_n, fp_tot)
+            _panel_tres(top_fp, "Fuerza Pública", fp_sin_n, fp_sin_p, fp_con_n, fp_con_p, fp_comp_n, fp_comp_p, fp_tot)
+
+            # ── ABAJO: Avance de Indicadores (ancho) ──
+            bottom = st.container()
+            _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
-
