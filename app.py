@@ -455,12 +455,10 @@ def _to_num_safe(x, pct=False):
             return float(s)
         except:
             return 0.0
-    # enteros / floats en columnas (n)
     s = s.replace(",", ".")
     try:
         return float(s)
     except:
-        # intenta extraer dígitos
         m = re.search(r"-?\d+(\.\d+)?", s)
         return float(m.group()) if m else 0.0
 
@@ -483,29 +481,33 @@ COLOR_VERDE  = "#7AC943"
 COLOR_AZUL_T = "#9BBBD9"
 COLOR_AZUL_H = "#1F4E79"
 
+# === Gráfico con fondo negro (modo oscuro) ===
 def _bar_avance(pcts_tuple, title=""):
-    # pcts_tuple: (sin%, con%, comp%)
     labels = ["Sin Actividades", "Con Actividades", "Cumplida"]
     values = list(pcts_tuple)
     colors = [COLOR_ROJO, COLOR_AMARIL, COLOR_VERDE]
 
     fig, ax = plt.subplots(figsize=(5.5, 3.5))
+    fig.patch.set_facecolor("#000000")   # lienzo
+    ax.set_facecolor("#000000")          # área de ejes
     ax.bar(labels, values, color=colors)
     ax.set_ylim(0, 100)
-    ax.set_ylabel("%")
-    ax.set_title(title)
+    ax.set_ylabel("%", color="white")
+    ax.set_title(title, color="white")
+    ax.tick_params(axis="x", colors="white")
+    ax.tick_params(axis="y", colors="white")
+    for spine in ax.spines.values():
+        spine.set_color("white")
     for i, v in enumerate(values):
-        ax.text(i, v + 1, f"{v:.0f}%", ha="center", va="bottom", fontsize=10)
+        ax.text(i, v + 1, f"{v:.0f}%", ha="center", va="bottom", fontsize=10, color="white")
     st.pyplot(fig, use_container_width=True)
 
 def _panel_tres(col, titulo, n_rojo, p_rojo, n_amar, p_amar, n_verde, p_verde, total):
     with col:
-        # Header
         st.markdown(f"""
         <div style="background:{COLOR_AZUL_H};color:white;padding:8px 12px;border-radius:6px 6px 0 0;
                     font-weight:700;text-align:center;">{titulo}</div>
         """, unsafe_allow_html=True)
-        # Body tipo tablero 3x2
         c1, c2, c3 = st.columns(3)
         c1.markdown(f"""
             <div style="background:{COLOR_ROJO};color:white;text-align:center;padding:8px;border:1px solid #ddd;">
@@ -540,7 +542,6 @@ def _resumen_avance(col, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind):
                     font-weight:700;text-align:center;">Avance de Indicadores</div>
         """, unsafe_allow_html=True)
 
-        # cuadricula
         grid = st.columns(3)
         grid[0].markdown(f"""
             <div style="background:{COLOR_ROJO};color:white;text-align:center;padding:8px;border:1px solid #ddd;">
@@ -568,7 +569,6 @@ def _resumen_avance(col, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind):
         )
 
 def _ensure_numeric(df):
-    # normaliza nombres esperados y garantiza numérico
     cols_n = [
         "GL Completos (n)","GL Con actividades (n)","GL Sin actividades (n)",
         "FP Completos (n)","FP Con actividades (n)","FP Sin actividades (n)",
@@ -596,28 +596,23 @@ def _infer_dr(name: str) -> str:
         return m.group(1).replace(" ", "")
     return "Sin DR / No identificado"
 
+# ============================= MAIN DASHBOARD =============================
 if dash_file:
     try:
         df_dash = pd.read_excel(dash_file, sheet_name="resumen")
     except Exception:
-        # Si no trae nombre de hoja, intenta primera
         df_dash = pd.read_excel(dash_file)
 
-    # Seguridad: columnas mínimas
-    needed = [
+    # Aviso si faltan algunas columnas (no bloquea)
+    faltantes = [c for c in [
         "Delegación","Líneas de Acción",
         "GL Completos (n)","GL Con actividades (n)","GL Sin actividades (n)",
-        "GL Completos (%)","GL Con actividades (%)","GL Sin actividades (%)",
         "FP Completos (n)","FP Con actividades (n)","FP Sin actividades (n)",
-        "FP Completos (%)","FP Con actividades (%)","FP Sin actividades (%)",
         "Completos (n)","Con actividades (n)","Sin actividades (n)",
-        "Completos (%)","Con actividades (%)","Sin actividades (%)",
         "Indicadores Gobierno Local","Indicadores Fuerza Pública","Total Indicadores"
-    ]
-    # Aviso si falta algo (pero seguimos con lo que haya)
-    faltantes = [c for c in needed if c not in df_dash.columns]
+    ] if c not in df_dash.columns]
     if faltantes:
-        st.warning("El Excel no trae algunas columnas esperadas (se mostrarán los paneles posibles): " + ", ".join(faltantes))
+        st.warning("El Excel no trae algunas columnas esperadas: " + ", ".join(faltantes))
 
     df_dash = _ensure_numeric(df_dash.copy())
     df_dash["DR_inferida"] = df_dash["Delegación"].apply(_infer_dr)
@@ -633,16 +628,8 @@ if dash_file:
             st.info("No hay delegaciones en el archivo.")
         else:
             sel = st.selectbox("Delegación Policial", delegs, index=0, key="sel_deleg")
-
-            # Si hay duplicados de la misma delegación, agregamos (sum)
             dsel = df_dash[df_dash["Delegación"] == sel]
             agg = dsel.select_dtypes(include=[np.number]).sum(numeric_only=True)
-            # Para porcentajes globales, si vienen como % ya en columnas, usamos la primera fila válida;
-            # si no, los recalculamos con los (n) y el total.
-            def _pct_or_calc(n, tot, fallback):
-                if not np.isnan(fallback) and fallback > 0:
-                    return float(fallback)
-                return (n / tot * 100.0) if tot > 0 else 0.0
 
             total_ind = agg.get("Total Indicadores", np.nan)
             if np.isnan(total_ind):
@@ -652,56 +639,38 @@ if dash_file:
             con_n  = agg.get("Con actividades (n)", 0)
             comp_n = agg.get("Completos (n)", 0)
 
-            sin_p  = _pct_or_calc(sin_n, total_ind, dsel["Sin actividades (%)"].dropna().iloc[0] if "Sin actividades (%)" in dsel.columns and not dsel["Sin actividades (%)"].dropna().empty else np.nan)
-            con_p  = _pct_or_calc(con_n, total_ind, dsel["Con actividades (%)"].dropna().iloc[0] if "Con actividades (%)" in dsel.columns and not dsel["Con actividades (%)"].dropna().empty else np.nan)
-            comp_p = _pct_or_calc(comp_n, total_ind, dsel["Completos (%)"].dropna().iloc[0] if "Completos (%)" in dsel.columns and not dsel["Completos (%)"].dropna().empty else np.nan)
+            def _pct(n, d): 
+                return (n / d * 100.0) if d > 0 else 0.0
 
-            # Título central y gráfico
+            sin_p, con_p, comp_p = _pct(sin_n, total_ind), _pct(con_n, total_ind), _pct(comp_n, total_ind)
+
             st.markdown(f"<h3 style='text-align:center;margin-top:0;'>{sel}</h3>", unsafe_allow_html=True)
             _bar_avance((sin_p, con_p, comp_p), title="Avance (%)")
+            _big_number(int(agg.get("Líneas de Acción", 0)), "Líneas de Acción")
 
-            # Línea de acción en grande
-            la_val = int(agg.get("Líneas de Acción", 0))
-            _big_number(la_val, "Líneas de Acción")
-
-            # Panel Izq: Avance de Indicadores (cuadros)
             col_left, col_right = st.columns([1.2, 1.2])
+            _resumen_avance(col_left, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
-            _resumen_avance(
-                col_left,
-                sin_n, sin_p,
-                con_n, con_p,
-                comp_n, comp_p,
-                total_ind
-            )
-
-            # Paneles Derecho: GL y FP
+            # Panel Gobierno Local
             gl_tot = agg.get("Indicadores Gobierno Local", 0)
             gl_sin_n  = agg.get("GL Sin actividades (n)", 0)
             gl_con_n  = agg.get("GL Con actividades (n)", 0)
             gl_comp_n = agg.get("GL Completos (n)", 0)
-            gl_sin_p  = _pct_or_calc(gl_sin_n, gl_tot, dsel["GL Sin actividades (%)"].dropna().iloc[0] if "GL Sin actividades (%)" in dsel.columns and not dsel["GL Sin actividades (%)"].dropna().empty else np.nan)
-            gl_con_p  = _pct_or_calc(gl_con_n, gl_tot, dsel["GL Con actividades (%)"].dropna().iloc[0] if "GL Con actividades (%)" in dsel.columns and not dsel["GL Con actividades (%)"].dropna().empty else np.nan)
-            gl_comp_p = _pct_or_calc(gl_comp_n, gl_tot, dsel["GL Completos (%)"].dropna().iloc[0] if "GL Completos (%)" in dsel.columns and not dsel["GL Completos (%)"].dropna().empty else np.nan)
+            gl_sin_p  = _pct(gl_sin_n, gl_tot)
+            gl_con_p  = _pct(gl_con_n, gl_tot)
+            gl_comp_p = _pct(gl_comp_n, gl_tot)
+            _panel_tres(col_right, "Gobierno Local", gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
 
+            # Panel Fuerza Pública (⚠️ contenedor propio; no usar `st` en `with`)
             fp_tot = agg.get("Indicadores Fuerza Pública", 0)
             fp_sin_n  = agg.get("FP Sin actividades (n)", 0)
             fp_con_n  = agg.get("FP Con actividades (n)", 0)
             fp_comp_n = agg.get("FP Completos (n)", 0)
-            fp_sin_p  = _pct_or_calc(fp_sin_n, fp_tot, dsel["FP Sin actividades (%)"].dropna().iloc[0] if "FP Sin actividades (%)" in dsel.columns and not dsel["FP Sin actividades (%)"].dropna().empty else np.nan)
-            fp_con_p  = _pct_or_calc(fp_con_n, fp_tot, dsel["FP Con actividades (%)"].dropna().iloc[0] if "FP Con actividades (%)" in dsel.columns and not dsel["FP Con actividades (%)"].dropna().empty else np.nan)
-            fp_comp_p = _pct_or_calc(fp_comp_n, fp_tot, dsel["FP Completos (%)"].dropna().iloc[0] if "FP Completos (%)" in dsel.columns and not dsel["FP Completos (%)"].dropna().empty else np.nan)
-
-            _panel_tres(
-                col_right, "Gobierno Local",
-                gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot
-            )
-
-            col_right2 = st.container()
-            _panel_tres(
-                st, "Fuerza Pública",
-                fp_sin_n, fp_sin_p, fp_con_n, fp_con_p, fp_comp_n, fp_comp_p, fp_tot
-            )
+            fp_sin_p  = _pct(fp_sin_n, fp_tot)
+            fp_con_p  = _pct(fp_con_n, fp_tot)
+            fp_comp_p = _pct(fp_comp_n, fp_tot)
+            col_right_fp = st.container()
+            _panel_tres(col_right_fp, "Fuerza Pública", fp_sin_n, fp_sin_p, fp_con_n, fp_con_p, fp_comp_n, fp_comp_p, fp_tot)
 
     # =================== TAB 2: POR DIRECCIÓN REGIONAL ===================
     with tabs[1]:
@@ -713,7 +682,6 @@ if dash_file:
         if df_dr.empty:
             st.info("No hay registros para esa DR.")
         else:
-            # Agregados por DR
             agg = df_dr.select_dtypes(include=[np.number]).sum(numeric_only=True)
 
             total_ind = agg.get("Total Indicadores", np.nan)
@@ -724,10 +692,10 @@ if dash_file:
             con_n  = agg.get("Con actividades (n)", 0)
             comp_n = agg.get("Completos (n)", 0)
 
-            def _pct(n): 
-                return (n / total_ind * 100.0) if total_ind > 0 else 0.0
+            def _pct(n, d): 
+                return (n / d * 100.0) if d > 0 else 0.0
 
-            sin_p, con_p, comp_p = _pct(sin_n), _pct(con_n), _pct(comp_n)
+            sin_p, con_p, comp_p = _pct(sin_n, total_ind), _pct(con_n, total_ind), _pct(comp_n, total_ind)
 
             st.markdown(f"<h3 style='text-align:center;margin-top:0;'>{sel_dr}</h3>", unsafe_allow_html=True)
             _bar_avance((sin_p, con_p, comp_p), title="Avance (%)")
@@ -736,33 +704,26 @@ if dash_file:
             col_left, col_right = st.columns([1.2, 1.2])
             _resumen_avance(col_left, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
-            # GL y FP por DR
+            # GL por DR
             gl_tot = agg.get("Indicadores Gobierno Local", 0)
             gl_sin_n  = agg.get("GL Sin actividades (n)", 0)
             gl_con_n  = agg.get("GL Con actividades (n)", 0)
             gl_comp_n = agg.get("GL Completos (n)", 0)
-            gl_sin_p  = (gl_sin_n / gl_tot * 100.0) if gl_tot > 0 else 0.0
-            gl_con_p  = (gl_con_n / gl_tot * 100.0) if gl_tot > 0 else 0.0
-            gl_comp_p = (gl_comp_n / gl_tot * 100.0) if gl_tot > 0 else 0.0
+            gl_sin_p  = _pct(gl_sin_n, gl_tot)
+            gl_con_p  = _pct(gl_con_n, gl_tot)
+            gl_comp_p = _pct(gl_comp_n, gl_tot)
+            _panel_tres(col_right, "Gobierno Local", gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
 
+            # FP por DR (⚠️ contenedor propio)
             fp_tot = agg.get("Indicadores Fuerza Pública", 0)
             fp_sin_n  = agg.get("FP Sin actividades (n)", 0)
             fp_con_n  = agg.get("FP Con actividades (n)", 0)
             fp_comp_n = agg.get("FP Completos (n)", 0)
-            fp_sin_p  = (fp_sin_n / fp_tot * 100.0) if fp_tot > 0 else 0.0
-            fp_con_p  = (fp_con_n / fp_tot * 100.0) if fp_tot > 0 else 0.0
-            fp_comp_p = (fp_comp_n / fp_tot * 100.0) if fp_tot > 0 else 0.0
-
-            _panel_tres(
-                col_right, "Gobierno Local",
-                gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot
-            )
-
-            _panel_tres(
-                st, "Fuerza Pública",
-                fp_sin_n, fp_sin_p, fp_con_n, fp_con_p, fp_comp_n, fp_comp_p, fp_tot
-            )
+            fp_sin_p  = _pct(fp_sin_n, fp_tot)
+            fp_con_p  = _pct(fp_con_n, fp_tot)
+            fp_comp_p = _pct(fp_comp_n, fp_tot)
+            col_right_below = st.container()
+            _panel_tres(col_right_below, "Fuerza Pública", fp_sin_n, fp_sin_p, fp_con_n, fp_con_p, fp_comp_n, fp_comp_p, fp_tot)
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
-
 
