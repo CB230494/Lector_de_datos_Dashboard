@@ -312,9 +312,9 @@ with st.sidebar:
 st.markdown("""
 Sube tus matrices (.xlsx / .xlsm). La app detecta:
 - **Delegación**, **Líneas de Acción**
-- **Avance de Indicadores** (*Completos / Con actividades / Sin actividades*, con **n** y **%**, evaluado por fila de indicador y columnas **Avance**)
-- **Indicadores** por **Gobierno Local** y **Fuerza Pública** (conteo de filas GL/FP) **y su desglose por estado (n y %)**.
-- **Total de Indicadores** (si existe).
+- **Avance de Indicadores** (*Completos / Con actividades / Sin actividades*, con **n** y **%**)
+- **Indicadores** por **Gobierno Local** y **Fuerza Pública** (n y %)
+- **Total de Indicadores** (si existe)
 
 y genera un **Excel consolidado** listo para descargar.
 """)
@@ -355,7 +355,6 @@ if uploads:
 
             "indicadores_total":"Total Indicadores",
 
-            # Global (referencia)
             "completos_n":"Completos (n)",
             "completos_pct":"Completos (%)",
             "conact_n":"Con actividades (n)",
@@ -418,8 +417,8 @@ with st.expander("ℹ️ Instrucciones", expanded=True):
     st.markdown("""
     1) **Carga** aquí el **Excel consolidado** (hoja `resumen`).  
     2) Pestañas: **Por Delegación**, **Por Dirección Regional**, y **Gobierno Local (por Provincia)**.  
-    3) Disposición: **arriba GL/FP** y **abajo Avance de Indicadores** (en la tercera pestaña solo se muestra GL).  
-    4) DR y Provincia se toman **directamente del Excel** aunque la columna tenga nombres/acentos/espacios distintos.
+    3) En todas se muestra **Líneas de Acción total** y, si el archivo trae, el **desglose**: Gobierno Local / Fuerza Pública / Mixtas.  
+    4) La primera sección de la app (consolidado desde múltiples matrices) sigue igual; este dashboard usa ese mismo **único Excel**.
     """)
 
 dash_file = st.file_uploader("Cargar Excel consolidado (resumen_matrices.xlsx)", type=["xlsx"], key="dash_excel")
@@ -442,13 +441,14 @@ def _to_num_safe(x, pct=False):
         m = re.search(r"-?\d+(\.\d+)?", s)
         return float(m.group()) if m else 0.0
 
-def _big_number(value, label, helptext=None):
+def _big_number(value, label, helptext=None, big_px=80):
+    """Muestra label arriba y el número abajo más grande."""
     c = st.container()
     with c:
         st.markdown(f"""
-        <div style="text-align:center;padding:8px 0;background:#ffffff;border:1px solid #e3e3e3;border-radius:8px;">
-            <div style="font-size:54px;font-weight:800;line-height:1;margin:0;color:#111;">{value}</div>
-            <div style="font-size:14px;color:#666;margin-top:4px;">{label}</div>
+        <div style="text-align:center;padding:10px;background:#ffffff;border:1px solid #e3e3e3;border-radius:8px;">
+            <div style="font-size:14px;color:#666;margin-bottom:6px;">{label}</div>
+            <div style="font-size:{big_px}px;font-weight:900;line-height:1;color:#111;">{value}</div>
         </div>
         """, unsafe_allow_html=True)
         if helptext:
@@ -509,8 +509,8 @@ def _panel_tres(col, titulo, n_rojo, p_rojo, n_amar, p_amar, n_verde, p_verde, t
 
         st.markdown(
             f"""<div style="text-align:center;border:1px solid #e3e3e3;border-top:0;padding:10px;border-radius:0 0 8px 8px;background:#ffffff;color:#111;">
-            <div style="font-size:40px;font-weight:800;line-height:1;">{int(total)}</div>
-            <div style="font-size:13px;color:#666;">Total de indicadores</div></div>""",
+            <div style="font-size:13px;color:#666;margin-bottom:4px;">Total de indicadores</div>
+            <div style="font-size:44px;font-weight:900;line-height:1;">{int(total)}</div></div>""",
             unsafe_allow_html=True
         )
 
@@ -541,9 +541,11 @@ def _resumen_avance(col, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind):
               <div style="font-size:16px;font-weight:700;">{comp_p:.0f}%</div>
             </div>""", unsafe_allow_html=True)
 
+        # Texto arriba y número grande abajo
         st.markdown(
-            f"""<div style="text-align:center;border:1px solid #e3e3e3;border-top:0;padding:10px;border-radius:0 0 8px 8px;background:#ffffff;color:#111;">
-            <div style="font-size:18px;font-weight:700;">Total de indicadores (Gobierno Local + Fuerza Pública): {int(total_ind)}</div></div>""",
+            f"""<div style="text-align:center;border:1px solid #e3e3e3;border-top:0;padding:14px;border-radius:0 0 8px 8px;background:#ffffff;color:#111;">
+            <div style="font-size:13px;color:#666;margin-bottom:6px;">Total de indicadores (Gobierno Local + Fuerza Pública)</div>
+            <div style="font-size:60px;font-weight:900;line-height:1;">{int(total_ind)}</div></div>""",
             unsafe_allow_html=True
         )
 
@@ -552,7 +554,8 @@ def _ensure_numeric(df):
         "GL Completos (n)","GL Con actividades (n)","GL Sin actividades (n)",
         "FP Completos (n)","FP Con actividades (n)","FP Sin actividades (n)",
         "Completos (n)","Con actividades (n)","Sin actividades (n)",
-        "Indicadores Gobierno Local","Indicadores Fuerza Pública","Total Indicadores","Líneas de Acción"
+        "Indicadores Gobierno Local","Indicadores Fuerza Pública","Total Indicadores",
+        "Líneas de Acción","Líneas de Acción Gobierno Local","Líneas de Acción Fuerza Pública","Líneas de Acción Mixtas"
     ]
     cols_p = [
         "GL Completos (%)","GL Con actividades (%)","GL Sin actividades (%)",
@@ -619,6 +622,42 @@ def _pick_prov_column(df: pd.DataFrame) -> Optional[str]:
             return real
     return None
 
+# --------- helper: total y desglose de Líneas de Acción ---------------
+def _lineas_tot_y_desglose(agg: pd.Series):
+    has_gl = "Líneas de Acción Gobierno Local" in agg.index
+    has_fp = "Líneas de Acción Fuerza Pública" in agg.index
+    has_mx = "Líneas de Acción Mixtas" in agg.index
+    if has_gl or has_fp or has_mx:
+        gl = int(agg.get("Líneas de Acción Gobierno Local", 0) or 0)
+        fp = int(agg.get("Líneas de Acción Fuerza Pública", 0) or 0)
+        mx = int(agg.get("Líneas de Acción Mixtas", 0) or 0)
+        total = gl + fp + mx
+        return total, gl, fp, mx, True
+    # Fallback al total antiguo
+    total = int(agg.get("Líneas de Acción", 0) or 0)
+    return total, None, None, None, False
+
+def _render_lineas_block(agg: pd.Series):
+    total, gl, fp, mx, has_breakdown = _lineas_tot_y_desglose(agg)
+    _big_number(total, "Líneas de Acción", big_px=72)
+    if has_breakdown:
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(f"""
+            <div style="background:#ffffff;border:1px solid #e3e3e3;border-radius:8px;padding:10px;text-align:center;">
+              <div style="font-size:13px;color:#666;margin-bottom:4px;">Gobierno Local</div>
+              <div style="font-size:32px;font-weight:800;color:#111;">{gl}</div>
+            </div>""", unsafe_allow_html=True)
+        c2.markdown(f"""
+            <div style="background:#ffffff;border:1px solid #e3e3e3;border-radius:8px;padding:10px;text-align:center;">
+              <div style="font-size:13px;color:#666;margin-bottom:4px;">Fuerza Pública</div>
+              <div style="font-size:32px;font-weight:800;color:#111;">{fp}</div>
+            </div>""", unsafe_allow_html=True)
+        c3.markdown(f"""
+            <div style="background:#ffffff;border:1px solid #e3e3e3;border-radius:8px;padding:10px;text-align:center;">
+              <div style="font-size:13px;color:#666;margin-bottom:4px;">Mixtas</div>
+              <div style="font-size:32px;font-weight:800;color:#111;">{mx}</div>
+            </div>""", unsafe_allow_html=True)
+
 # ============================= MAIN DASHBOARD =============================
 if dash_file:
     try:
@@ -673,10 +712,12 @@ if dash_file:
             sin_p, con_p, comp_p = _pct(sin_n, total_ind), _pct(con_n, total_ind), _pct(comp_n, total_ind)
 
             st.markdown(f"<h3 style='text-align:center;margin-top:0;color:#111;'>{sel}</h3>", unsafe_allow_html=True)
-            _bar_avance((sin_p, con_p, comp_p), title="Avance (%)")
-            _big_number(int(agg.get("Líneas de Acción", 0)), "Líneas de Acción")
 
-            # Arriba: GL y FP
+            # Líneas de Acción (total + breakdown si existe)
+            _render_lineas_block(agg)
+
+            # Gráfica y GL/FP
+            _bar_avance((sin_p, con_p, comp_p), title="Avance (%)")
             top_gl, top_fp = st.columns(2)
             gl_tot = agg.get("Indicadores Gobierno Local", 0)
             gl_sin_n  = agg.get("GL Sin actividades (n)", 0); gl_con_n  = agg.get("GL Con actividades (n)", 0); gl_comp_n = agg.get("GL Completos (n)", 0)
@@ -688,7 +729,6 @@ if dash_file:
             fp_sin_p  = _pct(fp_sin_n, fp_tot);               fp_con_p  = _pct(fp_con_n, fp_tot);                fp_comp_p = _pct(fp_comp_n, fp_tot)
             _panel_tres(top_fp, "Fuerza Pública", fp_sin_n, fp_sin_p, fp_con_n, fp_con_p, fp_comp_n, fp_comp_p, fp_tot)
 
-            # Abajo: Avance de Indicadores (con etiqueta aclaratoria)
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
@@ -721,10 +761,12 @@ if dash_file:
             sin_p, con_p, comp_p = _pct(sin_n, total_ind), _pct(con_n, total_ind), _pct(comp_n, total_ind)
 
             st.markdown(f"<h3 style='text-align:center;margin-top:0;color:#111;'>{sel_dr}</h3>", unsafe_allow_html=True)
-            _bar_avance((sin_p, con_p, comp_p), title="Avance (%)")
-            _big_number(int(agg.get("Líneas de Acción", 0)), "Líneas de Acción")
 
-            # Arriba: GL y FP
+            # Líneas de Acción (total + breakdown)
+            _render_lineas_block(agg)
+
+            _bar_avance((sin_p, con_p, comp_p), title="Avance (%)")
+
             top_gl, top_fp = st.columns(2)
             gl_tot = agg.get("Indicadores Gobierno Local", 0)
             gl_sin_n  = agg.get("GL Sin actividades (n)", 0); gl_con_n  = agg.get("GL Con actividades (n)", 0); gl_comp_n = agg.get("GL Completos (n)", 0)
@@ -755,12 +797,13 @@ if dash_file:
             if df_prov.empty:
                 st.info("No hay registros para esa provincia.")
             else:
-                # Agrega TODAS las delegaciones de la provincia
                 agg = df_prov.select_dtypes(include=[np.number]).sum(numeric_only=True)
+
+                # Líneas de Acción (total + breakdown)
+                _render_lineas_block(agg)
 
                 # TOTAL SOLO GL
                 gl_tot = agg.get("Indicadores Gobierno Local", 0)
-
                 gl_sin_n  = agg.get("GL Sin actividades (n)", 0)
                 gl_con_n  = agg.get("GL Con actividades (n)", 0)
                 gl_comp_n = agg.get("GL Completos (n)", 0)
@@ -772,23 +815,17 @@ if dash_file:
                 gl_con_p = _pct(gl_con_n, gl_tot)
                 gl_comp_p = _pct(gl_comp_n, gl_tot)
 
-                # Header
                 st.markdown(
                     f"<h3 style='text-align:center;margin-top:0;color:#111;'>Provincia: {sel_prov}</h3>",
                     unsafe_allow_html=True
                 )
 
-                # Gráfica de avance (solo GL)
                 _bar_avance((gl_sin_p, gl_con_p, gl_comp_p), title="Avance GL (%)")
 
-                # Métrica de Líneas de Acción (si está)
-                _big_number(int(agg.get("Líneas de Acción", 0)), "Líneas de Acción")
-
-                # Panel GL — SOLO Gobierno Local
                 _panel_tres(st.container(), "Gobierno Local",
                             gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
 
-                # ---- NUEVO: cuadro con delegaciones de la provincia ----
+                # Delegaciones de la provincia
                 delegs = sorted(df_prov["Delegación"].dropna().astype(str).unique().tolist()) if "Delegación" in df_prov.columns else []
                 if delegs:
                     st.markdown(
@@ -801,3 +838,4 @@ if dash_file:
                     )
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
+
