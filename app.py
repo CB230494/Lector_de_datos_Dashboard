@@ -13,6 +13,7 @@ from typing import Dict, Optional, Tuple, List
 import numpy as np
 import pandas as pd
 import streamlit as st
+import matplotlib.pyplot as plt
 
 # ------------------------ Utilidades ----------------------------
 def _norm(x: str) -> str:
@@ -227,7 +228,7 @@ def process_file(upload, debug: bool=False) -> Dict:
     con_p  = pct(con_n,  total_ind)
     sin_p  = pct(sin_n,  total_ind)
 
-    # --- NUEVO: desglose por GL y FP ---
+    # Desglose por GL y FP
     gl_counts, n_gl, fp_counts, n_fp = avance_counts_by_role(df)
 
     gl_comp_n = gl_counts["completos"]
@@ -249,7 +250,7 @@ def process_file(upload, debug: bool=False) -> Dict:
     total_from_label = detect_total_indicadores(df)
     total_out = total_ind if total_ind else total_from_label
 
-    # Ajuste si falta un lado (manteniendo tu lógica original)
+    # Ajuste si falta un lado
     if (gl == 0 or fp == 0) and total_out and gl + fp != total_out:
         if gl == 0 and fp > 0:
             gl = max(0, total_out - fp)
@@ -261,7 +262,7 @@ def process_file(upload, debug: bool=False) -> Dict:
         "delegacion": deleg,
         "lineas_accion": lineas,
 
-        # Global (se conserva tal cual)
+        # Global
         "completos_n": comp_n,
         "completos_pct": comp_p,
         "conact_n": con_n,
@@ -269,10 +270,10 @@ def process_file(upload, debug: bool=False) -> Dict:
         "sinact_n": sin_n,
         "sinact_pct": sin_p,
 
-        # Indicadores por rol (conteos)
+        # Indicadores por rol
         "indicadores_gl": gl if gl is not None else None,
 
-        # --- NUEVAS 6 columnas GL (n y %) ---
+        # GL (n y %)
         "gl_completos_n": gl_comp_n,
         "gl_completos_pct": gl_comp_p,
         "gl_conact_n": gl_con_n,
@@ -282,7 +283,7 @@ def process_file(upload, debug: bool=False) -> Dict:
 
         "indicadores_fp": fp if fp is not None else None,
 
-        # --- NUEVAS 6 columnas FP (n y %) ---
+        # FP (n y %)
         "fp_completos_n": fp_comp_n,
         "fp_completos_pct": fp_comp_p,
         "fp_conact_n": fp_con_n,
@@ -312,8 +313,8 @@ st.markdown("""
 Sube tus matrices (.xlsx / .xlsm). La app detecta:
 - **Delegación**, **Líneas de Acción**
 - **Avance de Indicadores** (*Completos / Con actividades / Sin actividades*, con **n** y **%**, evaluado por fila de indicador y columnas **Avance**)
-- **Indicadores** por **Gobierno Local** y **Fuerza Pública** (conteo de filas GL/FP) **y su desglose por estado (n y %)** ← *(nuevo)*
-- **Total de Indicadores** (si existe)
+- **Indicadores** por **Gobierno Local** y **Fuerza Pública** (conteo de filas GL/FP) **y su desglose por estado (n y %)**.
+- **Total de Indicadores** (si existe).
 
 y genera un **Excel consolidado** listo para descargar.
 """)
@@ -331,15 +332,12 @@ if uploads:
     if rows:
         df_out = pd.DataFrame(rows)
 
-        # === Reordenación (se mantiene) + inserción de nuevas columnas ===
         rename = {
             "archivo":"Archivo",
             "delegacion":"Delegación",
             "lineas_accion":"Líneas de Acción",
 
             "indicadores_gl":"Indicadores Gobierno Local",
-
-            # --- GL (nuevas 6) ---
             "gl_completos_n":"GL Completos (n)",
             "gl_completos_pct":"GL Completos (%)",
             "gl_conact_n":"GL Con actividades (n)",
@@ -348,8 +346,6 @@ if uploads:
             "gl_sinact_pct":"GL Sin actividades (%)",
 
             "indicadores_fp":"Indicadores Fuerza Pública",
-
-            # --- FP (nuevas 6) ---
             "fp_completos_n":"FP Completos (n)",
             "fp_completos_pct":"FP Completos (%)",
             "fp_conact_n":"FP Con actividades (n)",
@@ -359,7 +355,7 @@ if uploads:
 
             "indicadores_total":"Total Indicadores",
 
-            # Global (se conservan al final para referencia)
+            # Global (referencia)
             "completos_n":"Completos (n)",
             "completos_pct":"Completos (%)",
             "conact_n":"Con actividades (n)",
@@ -369,33 +365,18 @@ if uploads:
         }
 
         order = [
-            "archivo",
-            "delegacion",
-            "lineas_accion",
-
+            "archivo","delegacion","lineas_accion",
             "indicadores_gl",
-            # --- aquí van las 6 de GL ---
-            "gl_completos_n","gl_completos_pct",
-            "gl_conact_n","gl_conact_pct",
-            "gl_sinact_n","gl_sinact_pct",
-
+            "gl_completos_n","gl_completos_pct","gl_conact_n","gl_conact_pct","gl_sinact_n","gl_sinact_pct",
             "indicadores_fp",
-            # --- aquí van las 6 de FP ---
-            "fp_completos_n","fp_completos_pct",
-            "fp_conact_n","fp_conact_pct",
-            "fp_sinact_n","fp_sinact_pct",
-
+            "fp_completos_n","fp_completos_pct","fp_conact_n","fp_conact_pct","fp_sinact_n","fp_sinact_pct",
             "indicadores_total",
-
-            # Global (al final, sin mover tu lógica)
-            "completos_n","completos_pct",
-            "conact_n","conact_pct",
-            "sinact_n","sinact_pct",
+            "completos_n","completos_pct","conact_n","conact_pct","sinact_n","sinact_pct",
         ]
 
         df_out = df_out[order].rename(columns=rename)
 
-        # Formato % (como texto con %)
+        # Formato % (texto con %)
         pct_cols = [
             "GL Completos (%)","GL Con actividades (%)","GL Sin actividades (%)",
             "FP Completos (%)","FP Con actividades (%)","FP Sin actividades (%)",
@@ -430,18 +411,15 @@ else:
 # =====================  PESTAÑA: 📊 Dashboard de Avance  ===============
 # ======================================================================
 
-import matplotlib.pyplot as plt
-import unicodedata
-
 st.divider()
 st.header("📊 Dashboard de Avance (extra)")
 
 with st.expander("ℹ️ Instrucciones", expanded=True):
     st.markdown("""
-    1) **Carga** aquí el **Excel consolidado** que genera esta misma app (hoja `resumen`).  
+    1) **Carga** aquí el **Excel consolidado** (hoja `resumen`).  
     2) Pestañas: **Por Delegación**, **Por Dirección Regional**, y **Gobierno Local (por Provincia)**.  
     3) Disposición: **arriba GL/FP** y **abajo Avance de Indicadores** (en la tercera pestaña solo se muestra GL).  
-    4) La Dirección Regional y Provincia se toman **directamente del Excel** aunque la columna tenga nombres/acentos/espacios distintos.
+    4) DR y Provincia se toman **directamente del Excel** aunque la columna tenga nombres/acentos/espacios distintos.
     """)
 
 dash_file = st.file_uploader("Cargar Excel consolidado (resumen_matrices.xlsx)", type=["xlsx"], key="dash_excel")
@@ -480,10 +458,9 @@ def _big_number(value, label, helptext=None):
 COLOR_ROJO   = "#ED1C24"
 COLOR_AMARIL = "#F4C542"
 COLOR_VERDE  = "#7AC943"
-COLOR_AZUL_T = "#9BBBD9"
 COLOR_AZUL_H = "#1F4E79"
 
-# === Gráfico ahora con fondo BLANCO ===
+# === Gráfico con fondo BLANCO ===
 def _bar_avance(pcts_tuple, title=""):
     labels = ["Sin actividades", "Con actividades", "Cumplida"]
     values = list(pcts_tuple)
@@ -533,7 +510,7 @@ def _panel_tres(col, titulo, n_rojo, p_rojo, n_amar, p_amar, n_verde, p_verde, t
         st.markdown(
             f"""<div style="text-align:center;border:1px solid #e3e3e3;border-top:0;padding:10px;border-radius:0 0 8px 8px;background:#ffffff;color:#111;">
             <div style="font-size:40px;font-weight:800;line-height:1;">{int(total)}</div>
-            <div style="font-size:13px;color:#666;">Total</div></div>""",
+            <div style="font-size:13px;color:#666;">Total de indicadores</div></div>""",
             unsafe_allow_html=True
         )
 
@@ -566,7 +543,7 @@ def _resumen_avance(col, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind):
 
         st.markdown(
             f"""<div style="text-align:center;border:1px solid #e3e3e3;border-top:0;padding:10px;border-radius:0 0 8px 8px;background:#ffffff;color:#111;">
-            <div style="font-size:18px;font-weight:700;">Total de Indicadores: {int(total_ind)}</div></div>""",
+            <div style="font-size:18px;font-weight:700;">Total de indicadores (Gobierno Local + Fuerza Pública): {int(total_ind)}</div></div>""",
             unsafe_allow_html=True
         )
 
@@ -590,19 +567,19 @@ def _ensure_numeric(df):
             df[c] = df[c].apply(lambda v: _to_num_safe(v, pct=True))
     return df
 
-# ------------------ DR: detección robusta desde Excel -------------------
+# ------------------ DR / Provincia: detección robusta -------------------
 def _norm_str(s: str) -> str:
     if s is None: return ""
     s = str(s)
     s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
-    s = s.replace("\u00A0", " ")  # NBSP → espacio
+    s = s.replace("\u00A0", " ")
     s = re.sub(r"[\s_\-]+", " ", s).strip().lower()
     return s
 
 def _infer_dr_from_delegacion(name: str) -> str:
     if not isinstance(name, str):
         return "Sin DR / No identificado"
-    m = re.search(r"(R\s*\d+)", name, flags=re.IGNORECASE)  # acepta "R1"
+    m = re.search(r"(R\s*\d+)", name, flags=re.IGNORECASE)
     if m:
         return m.group(1).upper().replace(" ", "")
     m = re.search(r"(DR-\s*\d+\S*)", name, flags=re.IGNORECASE)
@@ -611,37 +588,32 @@ def _infer_dr_from_delegacion(name: str) -> str:
     return "Sin DR / No identificado"
 
 def _pick_dr_column(df: pd.DataFrame) -> Optional[str]:
-    # mapa normalizado → nombre real
     norm_map = {_norm_str(c): c for c in df.columns}
     candidates = [
-        "direccionregional", "direccion regional", "dirregional",
-        "dr", "region", "regional", "direccion", "direccionreg", "regiones"
+        "direccionregional","direccion regional","dirregional",
+        "dr","region","regional","direccion","direccionreg","regiones"
     ]
     for cand in candidates:
         if cand in norm_map:
             return norm_map[cand]
-    # heurística: cualquier columna que contenga 'direccion' y 'regional', o sea 'dr'
     for k, real in norm_map.items():
         if ("direccion" in k and "regional" in k) or k == "dr":
             return real
     return None
 
 def _dr_sort_key(s: str):
-    # Ordena R1..R12 primero; luego alfabético
     if not isinstance(s, str):
         return (999, "")
     m = re.search(r"r\s*([0-9]+)", s, flags=re.IGNORECASE)
     num = int(m.group(1)) if m else 999
     return (num, s)
 
-# ------------------ Provincia: detección robusta ------------------------
 def _pick_prov_column(df: pd.DataFrame) -> Optional[str]:
     norm_map = {_norm_str(c): c for c in df.columns}
     candidates = ["provincia", "province", "prov", "provincial", "provincia nombre", "nom provincia"]
     for cand in candidates:
         if cand in norm_map:
             return norm_map[cand]
-    # heurística por contains
     for k, real in norm_map.items():
         if "provinc" in k:
             return real
@@ -656,28 +628,22 @@ if dash_file:
 
     df_dash = _ensure_numeric(df_dash.copy())
 
-    # Elegir columna de DR si existe; si no, inferir desde "Delegación"
+    # DR inferida
     dr_col = _pick_dr_column(df_dash)
     if dr_col:
-        # normaliza fuerte
         tmp = (
-            df_dash[dr_col]
-            .astype(str)
-            .apply(_norm_str)
-            .str.replace(r"\s+", " ", regex=True)
-            .str.strip()
+            df_dash[dr_col].astype(str).apply(_norm_str)
+            .str.replace(r"\s+", " ", regex=True).str.strip()
         )
-        # Restaura capitalización tipo "R1 Central"
         tmp = tmp.str.replace(
             r"(^r\s*\d+)\s*", lambda m: m.group(1).upper().replace(" ", "") + " ", regex=True
         )
-        # Si quedó genérico, marca como Sin DR
         tmp = tmp.replace({"": "Sin DR / No identificado", "nan": "Sin DR / No identificado", "none": "Sin DR / No identificado"})
         df_dash["DR_inferida"] = tmp
     else:
         df_dash["DR_inferida"] = df_dash.get("Delegación", "").apply(_infer_dr_from_delegacion)
 
-    # =================== TABS (ahora 3 pestañas) ===================
+    # Pestañas (mismo Excel para las 3)
     tabs = st.tabs(["🏢 Por Delegación", "🗺️ Por Dirección Regional", "🏛️ Gobierno Local (por Provincia)"])
 
     # ======================= TAB 1: POR DELEGACIÓN =======================
@@ -701,12 +667,11 @@ if dash_file:
             con_n  = agg.get("Con actividades (n)", 0)
             comp_n = agg.get("Completos (n)", 0)
 
-            def _pct(n, d):
+            def _pct(n, d): 
                 return (n / d * 100.0) if d > 0 else 0.0
 
             sin_p, con_p, comp_p = _pct(sin_n, total_ind), _pct(con_n, total_ind), _pct(comp_n, total_ind)
 
-            # Título + gráfica + líneas de acción
             st.markdown(f"<h3 style='text-align:center;margin-top:0;color:#111;'>{sel}</h3>", unsafe_allow_html=True)
             _bar_avance((sin_p, con_p, comp_p), title="Avance (%)")
             _big_number(int(agg.get("Líneas de Acción", 0)), "Líneas de Acción")
@@ -723,7 +688,7 @@ if dash_file:
             fp_sin_p  = _pct(fp_sin_n, fp_tot);               fp_con_p  = _pct(fp_con_n, fp_tot);                fp_comp_p = _pct(fp_comp_n, fp_tot)
             _panel_tres(top_fp, "Fuerza Pública", fp_sin_n, fp_sin_p, fp_con_n, fp_con_p, fp_comp_n, fp_comp_p, fp_tot)
 
-            # Abajo: Avance de Indicadores
+            # Abajo: Avance de Indicadores (con etiqueta aclaratoria)
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
@@ -732,12 +697,7 @@ if dash_file:
         st.subheader("Avance por Dirección Regional (DR)")
 
         drs = sorted(df_dash["DR_inferida"].astype(str).unique().tolist(), key=_dr_sort_key)
-        # intenta seleccionar la primera que NO sea "Sin DR"
-        idx_default = 0
-        for i, v in enumerate(drs):
-            if v and "sin dr" not in v.lower():
-                idx_default = i
-                break
+        idx_default = next((i for i,v in enumerate(drs) if v and "sin dr" not in v.lower()), 0)
 
         sel_dr = st.selectbox("Dirección Regional", drs, index=idx_default, key="sel_dr")
 
@@ -755,7 +715,7 @@ if dash_file:
             con_n  = agg.get("Con actividades (n)", 0)
             comp_n = agg.get("Completos (n)", 0)
 
-            def _pct(n, d):
+            def _pct(n, d): 
                 return (n / d * 100.0) if d > 0 else 0.0
 
             sin_p, con_p, comp_p = _pct(sin_n, total_ind), _pct(con_n, total_ind), _pct(comp_n, total_ind)
@@ -776,7 +736,6 @@ if dash_file:
             fp_sin_p  = _pct(fp_sin_n, fp_tot);               fp_con_p  = _pct(fp_con_n, fp_tot);                fp_comp_p = _pct(fp_comp_n, fp_tot)
             _panel_tres(top_fp, "Fuerza Pública", fp_sin_n, fp_sin_p, fp_con_n, fp_con_p, fp_comp_n, fp_comp_p, fp_tot)
 
-            # Abajo: Avance de Indicadores
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
@@ -784,63 +743,61 @@ if dash_file:
     with tabs[2]:
         st.subheader("Gobierno Local (filtrar por Provincia)")
 
-        st.markdown("**Carga un Excel** que contenga al menos: `Provincia`, `Delegación` y las columnas GL (`Indicadores Gobierno Local`, `GL ...`).")
-        gl_file = st.file_uploader("Cargar Excel para filtro de Gobierno Local (solo Provincia)", type=["xlsx"], key="gl_excel")
+        prov_col = _pick_prov_column(df_dash)
+        if not prov_col:
+            st.warning("No se detectó una columna de **Provincia** en el Excel consolidado. Agrega una columna 'Provincia'.")
+        else:
+            provincias = sorted(df_dash[prov_col].dropna().astype(str).unique().tolist())
+            sel_prov = st.selectbox("Provincia", provincias, index=0, key="sel_prov_only")
 
-        if gl_file:
-            try:
-                df_gl = pd.read_excel(gl_file, sheet_name="resumen")
-            except Exception:
-                df_gl = pd.read_excel(gl_file)
+            df_prov = df_dash[df_dash[prov_col].astype(str) == sel_prov]
 
-            df_gl = _ensure_numeric(df_gl.copy())
-
-            # Detectar columna Provincia
-            prov_col = _pick_prov_column(df_gl)
-            if not prov_col:
-                st.warning("No se detectó una columna de **Provincia**. Renombra tu columna a algo como 'Provincia'.")
+            if df_prov.empty:
+                st.info("No hay registros para esa provincia.")
             else:
-                # === Filtro SOLO por Provincia ===
-                provincias = sorted(df_gl[prov_col].dropna().astype(str).unique().tolist())
-                sel_prov = st.selectbox("Provincia", provincias, index=0, key="sel_prov_only")
+                # Agrega TODAS las delegaciones de la provincia
+                agg = df_prov.select_dtypes(include=[np.number]).sum(numeric_only=True)
 
-                df_prov = df_gl[df_gl[prov_col].astype(str) == sel_prov]
+                # TOTAL SOLO GL
+                gl_tot = agg.get("Indicadores Gobierno Local", 0)
 
-                if df_prov.empty:
-                    st.info("No hay registros para esa provincia.")
-                else:
-                    # Agrega TODAS las delegaciones de la provincia
-                    agg = df_prov.select_dtypes(include=[np.number]).sum(numeric_only=True)
+                gl_sin_n  = agg.get("GL Sin actividades (n)", 0)
+                gl_con_n  = agg.get("GL Con actividades (n)", 0)
+                gl_comp_n = agg.get("GL Completos (n)", 0)
 
-                    # TOTAL SOLO GL
-                    gl_tot = agg.get("Indicadores Gobierno Local", 0)
+                def _pct(n, d):
+                    return (n / d * 100.0) if d > 0 else 0.0
 
-                    gl_sin_n  = agg.get("GL Sin actividades (n)", 0)
-                    gl_con_n  = agg.get("GL Con actividades (n)", 0)
-                    gl_comp_n = agg.get("GL Completos (n)", 0)
+                gl_sin_p = _pct(gl_sin_n, gl_tot)
+                gl_con_p = _pct(gl_con_n, gl_tot)
+                gl_comp_p = _pct(gl_comp_n, gl_tot)
 
-                    def _pct(n, d):
-                        return (n / d * 100.0) if d > 0 else 0.0
+                # Header
+                st.markdown(
+                    f"<h3 style='text-align:center;margin-top:0;color:#111;'>Provincia: {sel_prov}</h3>",
+                    unsafe_allow_html=True
+                )
 
-                    gl_sin_p = _pct(gl_sin_n, gl_tot)
-                    gl_con_p = _pct(gl_con_n, gl_tot)
-                    gl_comp_p = _pct(gl_comp_n, gl_tot)
+                # Gráfica de avance (solo GL)
+                _bar_avance((gl_sin_p, gl_con_p, gl_comp_p), title="Avance GL (%)")
 
-                    # Header
+                # Métrica de Líneas de Acción (si está)
+                _big_number(int(agg.get("Líneas de Acción", 0)), "Líneas de Acción")
+
+                # Panel GL — SOLO Gobierno Local
+                _panel_tres(st.container(), "Gobierno Local",
+                            gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
+
+                # ---- NUEVO: cuadro con delegaciones de la provincia ----
+                delegs = sorted(df_prov["Delegación"].dropna().astype(str).unique().tolist()) if "Delegación" in df_prov.columns else []
+                if delegs:
                     st.markdown(
-                        f"<h3 style='text-align:center;margin-top:0;color:#111;'>Provincia: {sel_prov}</h3>",
+                        "<div style='margin-top:12px;background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:12px;'>"
+                        f"<div style='font-weight:700;margin-bottom:8px;color:#111;'>Delegaciones en {sel_prov}</div>"
+                        + "<ul style='margin:0 0 0 18px;color:#111;'>" +
+                        "".join([f"<li>{d}</li>" for d in delegs]) +
+                        "</ul></div>",
                         unsafe_allow_html=True
                     )
-
-                    # Gráfica de avance (solo GL)
-                    _bar_avance((gl_sin_p, gl_con_p, gl_comp_p), title="Avance GL (%)")
-
-                    # Métrica de Líneas de Acción si está
-                    _big_number(int(agg.get("Líneas de Acción", 0)), "Líneas de Acción")
-
-                    # Panel GL (arriba) — SOLO Gobierno Local
-                    _panel_tres(st.container(), "Gobierno Local",
-                                gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
-
