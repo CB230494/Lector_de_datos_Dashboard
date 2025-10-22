@@ -431,6 +431,7 @@ else:
 # ======================================================================
 
 import matplotlib.pyplot as plt
+import unicodedata
 
 st.divider()
 st.header("📊 Dashboard de Avance (extra)")
@@ -438,14 +439,14 @@ st.header("📊 Dashboard de Avance (extra)")
 with st.expander("ℹ️ Instrucciones", expanded=True):
     st.markdown("""
     1) **Carga** aquí el **Excel consolidado** que genera esta misma app (hoja `resumen`).  
-    2) Navega por las **pestañas**: *Por Delegación* y *Por Dirección Regional*.  
-    3) Colores: **Rojo** (Sin actividades), **Amarillo** (Con actividades), **Verde** (Cumplida).  
-    4) En ambos tabs: **arriba GL/FP**, **abajo Avance de Indicadores**.
+    2) Pestañas: **Por Delegación** y **Por Dirección Regional**.  
+    3) Disposición: **arriba GL/FP** y **abajo Avance de Indicadores**.  
+    4) La Dirección Regional se toma **directamente del Excel** aunque la columna tenga nombres/acentos/espacios distintos.
     """)
 
 dash_file = st.file_uploader("Cargar Excel consolidado (resumen_matrices.xlsx)", type=["xlsx"], key="dash_excel")
 
-# --------- helpers de parsing / estilos ----------
+# -------------------- helpers de parsing / estilos ---------------------
 def _to_num_safe(x, pct=False):
     if pd.isna(x):
         return 0.0
@@ -589,25 +590,49 @@ def _ensure_numeric(df):
             df[c] = df[c].apply(lambda v: _to_num_safe(v, pct=True))
     return df
 
-# === DR desde columna del Excel (si existe) o fallback desde "Delegación" ===
-_DR_COL_CANDIDATAS = [
-    "DirecciónRegional","DireccionRegional","Dirección Regional","Direccion Regional",
-    "DR","Region","Región","Regional","Dirección","Direccion"
-]
+# ------------------ DR: detección robusta desde Excel -------------------
+def _norm_str(s: str) -> str:
+    if s is None: return ""
+    s = str(s)
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+    s = s.replace("\u00A0", " ")  # NBSP → espacio
+    s = re.sub(r"[\s_\-]+", " ", s).strip().lower()
+    return s
 
 def _infer_dr_from_delegacion(name: str) -> str:
     if not isinstance(name, str):
         return "Sin DR / No identificado"
+    m = re.search(r"(R\s*\d+)", name, flags=re.IGNORECASE)  # acepta "R1"
+    if m:
+        return m.group(1).upper().replace(" ", "")
     m = re.search(r"(DR-\s*\d+\S*)", name, flags=re.IGNORECASE)
     if m:
         return m.group(1).replace(" ", "")
     return "Sin DR / No identificado"
 
-def _pick_dr_column(df: pd.DataFrame) -> str:
-    for c in _DR_COL_CANDIDATAS:
-        if c in df.columns:
-            return c
+def _pick_dr_column(df: pd.DataFrame) -> Optional[str]:
+    # mapa normalizado → nombre real
+    norm_map = {_norm_str(c): c for c in df.columns}
+    candidates = [
+        "direccionregional", "direccion regional", "dirregional",
+        "dr", "region", "regional", "direccion", "direccionreg", "regiones"
+    ]
+    for cand in candidates:
+        if cand in norm_map:
+            return norm_map[cand]
+    # heurística: cualquier columna que contenga 'direccion' y 'regional', o sea 'dr'
+    for k, real in norm_map.items():
+        if ("direccion" in k and "regional" in k) or k == "dr":
+            return real
     return None
+
+def _dr_sort_key(s: str):
+    # Ordena R1..R12 primero; luego alfabético
+    if not isinstance(s, str):
+        return (999, "")
+    m = re.search(r"r\s*([0-9]+)", s, flags=re.IGNORECASE)
+    num = int(m.group(1)) if m else 999
+    return (num, s)
 
 # ============================= MAIN DASHBOARD =============================
 if dash_file:
@@ -618,12 +643,24 @@ if dash_file:
 
     df_dash = _ensure_numeric(df_dash.copy())
 
-    # Elegimos la columna DR si existe; si no, inferimos desde "Delegación"
+    # Elegir columna de DR si existe; si no, inferir desde "Delegación"
     dr_col = _pick_dr_column(df_dash)
     if dr_col:
-        # Normaliza texto (quita dobles espacios)
-        df_dash["DR_inferida"] = df_dash[dr_col].astype(str).str.replace(r"\s+", " ", regex=True).str.strip()
-        df_dash.loc[df_dash["DR_inferida"].isin(["", "nan", "None"]), "DR_inferida"] = "Sin DR / No identificado"
+        # normaliza fuerte
+        tmp = (
+            df_dash[dr_col]
+            .astype(str)
+            .apply(_norm_str)
+            .str.replace(r"\s+", " ", regex=True)
+            .str.strip()
+        )
+        # Restaura capitalización tipo "R1 Central"
+        tmp = tmp.str.replace(
+            r"(^r\s*\d+)\s*", lambda m: m.group(1).upper().replace(" ", "") + " ", regex=True
+        )
+        # Si quedó genérico, marca como Sin DR
+        tmp = tmp.replace({"": "Sin DR / No identificado", "nan": "Sin DR / No identificado", "none": "Sin DR / No identificado"})
+        df_dash["DR_inferida"] = tmp
     else:
         df_dash["DR_inferida"] = df_dash.get("Delegación", "").apply(_infer_dr_from_delegacion)
 
@@ -633,11 +670,12 @@ if dash_file:
     with tabs[0]:
         st.subheader("Avance por Delegación Policial")
 
-        delegs = sorted(df_dash["Delegación"].dropna().astype(str).unique().tolist())
-        if not delegs:
-            st.info("No hay delegaciones en el archivo.")
+        if "Delegación" not in df_dash.columns:
+            st.info("El Excel no contiene la columna 'Delegación'.")
         else:
+            delegs = sorted(df_dash["Delegación"].dropna().astype(str).unique().tolist())
             sel = st.selectbox("Delegación Policial", delegs, index=0, key="sel_deleg")
+
             dsel = df_dash[df_dash["Delegación"] == sel]
             agg = dsel.select_dtypes(include=[np.number]).sum(numeric_only=True)
 
@@ -659,11 +697,11 @@ if dash_file:
             _bar_avance((sin_p, con_p, comp_p), title="Avance (%)")
             _big_number(int(agg.get("Líneas de Acción", 0)), "Líneas de Acción")
 
-            # ── ARRIBA: GL y FP ──
+            # Arriba: GL y FP
             top_gl, top_fp = st.columns(2)
             gl_tot = agg.get("Indicadores Gobierno Local", 0)
             gl_sin_n  = agg.get("GL Sin actividades (n)", 0); gl_con_n  = agg.get("GL Con actividades (n)", 0); gl_comp_n = agg.get("GL Completos (n)", 0)
-            gl_sin_p  = _pct(gl_sin_n, gl_tot);                gl_con_p  = _pct(gl_con_n, gl_tot);                gl_comp_p = _pct(gl_comp_n, gl_tot)
+            gl_sin_p  = _pct(gl_sin_n, gl_tot);               gl_con_p  = _pct(gl_con_n, gl_tot);                gl_comp_p = _pct(gl_comp_n, gl_tot)
             _panel_tres(top_gl, "Gobierno Local", gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
 
             fp_tot = agg.get("Indicadores Fuerza Pública", 0)
@@ -671,7 +709,7 @@ if dash_file:
             fp_sin_p  = _pct(fp_sin_n, fp_tot);               fp_con_p  = _pct(fp_con_n, fp_tot);                fp_comp_p = _pct(fp_comp_n, fp_tot)
             _panel_tres(top_fp, "Fuerza Pública", fp_sin_n, fp_sin_p, fp_con_n, fp_con_p, fp_comp_n, fp_comp_p, fp_tot)
 
-            # ── ABAJO: Avance de Indicadores (ancho) ──
+            # Abajo: Avance de Indicadores
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
@@ -679,8 +717,15 @@ if dash_file:
     with tabs[1]:
         st.subheader("Avance por Dirección Regional (DR)")
 
-        drs = sorted(df_dash["DR_inferida"].astype(str).unique().tolist())
-        sel_dr = st.selectbox("Dirección Regional", drs, index=0, key="sel_dr")
+        drs = sorted(df_dash["DR_inferida"].astype(str).unique().tolist(), key=_dr_sort_key)
+        # intenta seleccionar la primera que NO sea "Sin DR"
+        idx_default = 0
+        for i, v in enumerate(drs):
+            if v and "sin dr" not in v.lower():
+                idx_default = i
+                break
+
+        sel_dr = st.selectbox("Dirección Regional", drs, index=idx_default, key="sel_dr")
 
         df_dr = df_dash[df_dash["DR_inferida"] == sel_dr]
         if df_dr.empty:
@@ -705,7 +750,7 @@ if dash_file:
             _bar_avance((sin_p, con_p, comp_p), title="Avance (%)")
             _big_number(int(agg.get("Líneas de Acción", 0)), "Líneas de Acción")
 
-            # ── ARRIBA: GL y FP ──
+            # Arriba: GL y FP
             top_gl, top_fp = st.columns(2)
             gl_tot = agg.get("Indicadores Gobierno Local", 0)
             gl_sin_n  = agg.get("GL Sin actividades (n)", 0); gl_con_n  = agg.get("GL Con actividades (n)", 0); gl_comp_n = agg.get("GL Completos (n)", 0)
@@ -717,7 +762,7 @@ if dash_file:
             fp_sin_p  = _pct(fp_sin_n, fp_tot);               fp_con_p  = _pct(fp_con_n, fp_tot);                fp_comp_p = _pct(fp_comp_n, fp_tot)
             _panel_tres(top_fp, "Fuerza Pública", fp_sin_n, fp_sin_p, fp_con_n, fp_con_p, fp_comp_n, fp_comp_p, fp_tot)
 
-            # ── ABAJO: Avance de Indicadores (ancho) ──
+            # Abajo: Avance de Indicadores
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 else:
