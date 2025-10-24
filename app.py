@@ -463,13 +463,11 @@ COLOR_AZUL_H = "#1F4E79"
 def _bar_avance(pcts_tuple, title=""):
     labels = ["Sin actividades", "Con actividades", "Cumplida"]
     values = list(pcts_tuple)
-    # Colores fijados: Rojo, Amarillo, Verde
     colors = [COLOR_ROJO, COLOR_AMARIL, COLOR_VERDE]
-
     fig, ax = plt.subplots(figsize=(5.5, 3.5))
     fig.patch.set_facecolor("#ffffff")
     ax.set_facecolor("#ffffff")
-    ax.bar(labels, values, color=colors)  # <— colores restaurados
+    ax.bar(labels, values, color=colors)
     ax.set_ylim(0, 100)
     ax.set_ylabel("%", color="#111")
     ax.set_title(title, color="#111")
@@ -665,7 +663,6 @@ def _scope_total_o_seleccion(df_selected: pd.DataFrame, df_all_options: pd.DataF
     """
     use_total = st.toggle("Habilitar mostrar total de datos", value=False, key=key)
     scope = df_all_options if use_total else df_selected
-    # Pastilla minimalista
     st.markdown(
         f"""
         <div style="margin:8px 0 0 0; text-align:center;">
@@ -680,6 +677,181 @@ def _scope_total_o_seleccion(df_selected: pd.DataFrame, df_all_options: pd.DataF
     if use_total:
         st.caption(f"Mostrando la **totalidad** de {etiqueta_plural}.")
     return scope, use_total
+
+# ==================== NUEVO: CATEGORÍAS / PROBLEMÁTICAS ==================
+def _pick_col(df: pd.DataFrame, candidates_exact: List[str], substrs: List[str]) -> Optional[str]:
+    if df is None or df.empty:
+        return None
+    norm_map = {_norm_str(c): c for c in df.columns}
+    for c in candidates_exact:
+        if c in norm_map:
+            return norm_map[c]
+    for k, real in norm_map.items():
+        if any(s in k for s in substrs):
+            return real
+    return None
+
+def _pick_categoria_col(df: pd.DataFrame) -> Optional[str]:
+    return _pick_col(
+        df,
+        candidates_exact=["categoria","categoría"],
+        substrs=["categori"]
+    )
+
+def _pick_problematica_col(df: pd.DataFrame) -> Optional[str]:
+    return _pick_col(
+        df,
+        candidates_exact=["problematica","problemática","problema","descriptor"],
+        substrs=["problem","descrip"]
+    )
+
+def _pick_rol_col(df: pd.DataFrame) -> Optional[str]:
+    return _pick_col(
+        df,
+        candidates_exact=["rol","tipo","responsable","lider","líder","encargado"],
+        substrs=["rol","tipo","respons","lider","encarg","gl","fp","mixt"]
+    )
+
+def _map_rol_value(x: str) -> str:
+    """Normaliza a 'GL', 'FP' o 'Mixtas' según el contenido textual."""
+    s = _norm_str(x)
+    if any(k in s for k in ["mixt", "ambos", "compartid"]):
+        return "Mixtas"
+    if any(k in s for k in ["gl", "gobierno local", "municip", "alcald"]):
+        return "Gobierno Local"
+    if any(k in s for k in ["fp", "fuerza publica", "fuerza pública", "policia", "policía"]):
+        return "Fuerza Pública"
+    # fallback: intenta detectar siglas sueltas
+    if s.strip() == "gl": return "Gobierno Local"
+    if s.strip() == "fp": return "Fuerza Pública"
+    return "Gobierno Local"  # predetermina a GL si no se reconoce
+
+def _aggregate_roles(df_scope: pd.DataFrame, target_col: str, rol_col: str) -> pd.DataFrame:
+    """Agrupa por (target=Categoría/Problemática) y Rol (GL/FP/Mixtas) → tabla pivot."""
+    if df_scope.empty:
+        return pd.DataFrame()
+    tmp = df_scope[[target_col, rol_col]].dropna().copy()
+    if tmp.empty:
+        return pd.DataFrame()
+    tmp["__ROL__"] = tmp[rol_col].astype(str).apply(_map_rol_value)
+    tmp["__ONE__"] = 1
+    agg = tmp.groupby([target_col, "__ROL__"])["__ONE__"].sum().reset_index()
+    pivot = agg.pivot(index=target_col, columns="__ROL__", values="__ONE__").fillna(0).astype(int)
+    # añade columnas ausentes para orden consistente
+    for col in ["Gobierno Local", "Fuerza Pública", "Mixtas"]:
+        if col not in pivot.columns:
+            pivot[col] = 0
+    pivot["Total"] = pivot["Gobierno Local"] + pivot["Fuerza Pública"] + pivot["Mixtas"]
+    pivot = pivot.sort_values(["Total", "Gobierno Local", "Fuerza Pública", "Mixtas"], ascending=False)
+    return pivot
+
+def _pill(text: str, value: int, bg: str, fg: str="#111"):
+    return f"""
+    <span style="
+        display:inline-block;
+        padding:4px 8px;
+        margin-right:6px;
+        border-radius:999px;
+        background:{bg};
+        color:{fg};
+        font-size:12px;
+        border:1px solid #e3e3e3;
+    ">{text}: <b>{value}</b></span>
+    """
+
+def _render_cards_from_pivot(pivot: pd.DataFrame, title: str, max_inline: int = 24, key: str = "cards"):
+    st.markdown(f"<h4 style='margin:12px 0 8px;color:#111;'>{title}</h4>", unsafe_allow_html=True)
+    if pivot.empty:
+        st.info("No hay datos suficientes para este bloque (se requieren columnas de rol y de contenido).")
+        return
+
+    # muestra primeras N tarjetas y el resto en expander
+    items = list(pivot.itertuples())
+    head, tail = items[:max_inline], items[max_inline:]
+
+    def _card_html(name, gl, fp, mx, total):
+        return f"""
+        <div style="background:#fff;border:1px solid #eaeaea;border-radius:10px;padding:10px;margin-bottom:10px;">
+          <div style="font-size:14px;font-weight:700;color:#111;margin-bottom:6px;word-break:break-word;">{name}</div>
+          <div>{_pill("GL", gl, "#F0F9F0")}{_pill("FP", fp, "#F0F4FF")}{_pill("Mixtas", mx, "#FFF8E6")}{_pill("Total", total, "#F7F7F7")}</div>
+        </div>
+        """
+
+    # cuadrícula responsiva simple (3 columnas aprox)
+    cols = st.columns(3, gap="small")
+    for i, row in enumerate(head):
+        name = str(row.Index)
+        gl = int(row._asdict().get("Gobierno Local", 0))
+        fp = int(row._asdict().get("Fuerza Pública", 0))
+        mx = int(row._asdict().get("Mixtas", 0))
+        total = int(row._asdict().get("Total", gl+fp+mx))
+        with cols[i % 3]:
+            st.markdown(_card_html(name, gl, fp, mx, total), unsafe_allow_html=True)
+
+    if tail:
+        with st.expander(f"Ver más ({len(tail)} adicionales)"):
+            cols2 = st.columns(3, gap="small")
+            for i, row in enumerate(tail):
+                name = str(row.Index)
+                gl = int(row._asdict().get("Gobierno Local", 0))
+                fp = int(row._asdict().get("Fuerza Pública", 0))
+                mx = int(row._asdict().get("Mixtas", 0))
+                total = int(row._asdict().get("Total", gl+fp+mx))
+                with cols2[i % 3]:
+                    st.markdown(_card_html(name, gl, fp, mx, total), unsafe_allow_html=True)
+
+def _render_categorias_y_problemas(scope_df: pd.DataFrame, place_after: str):
+    """
+    Renderiza dos bloques:
+      - Categorías (GL/FP/Mixtas)
+      - Problemáticas (GL/FP/Mixtas)
+    Si faltan columnas, muestra una alerta suave.
+    """
+    if scope_df is None or scope_df.empty:
+        return
+
+    cat_col = _pick_categoria_col(scope_df)
+    prob_col = _pick_problematica_col(scope_df)
+    rol_col = _pick_rol_col(scope_df)
+
+    st.markdown("<hr/>", unsafe_allow_html=True)
+    st.markdown("<h3 style='margin:0;color:#111;'>📦 Categorías y Problemáticas (por rol)</h3>", unsafe_allow_html=True)
+    st.caption(f"Basado en el subconjunto activo del filtro: **{place_after}**.")
+
+    if not rol_col and not (cat_col or prob_col):
+        st.info("Para mostrar estos bloques, el Excel debe incluir columnas de **Rol/Tipo** y **Categoría/Problemática**.")
+        return
+    if not rol_col:
+        st.info("No se detectó columna de **Rol/Tipo/Responsable** (usada para clasificar en GL/FP/Mixtas).")
+    if not (cat_col or prob_col):
+        st.info("No se detectaron columnas de **Categoría/Problemática**.")
+        return
+
+    # Normaliza texto y evita espacios raros
+    def _clean_series(s):
+        return s.astype(str).str.replace("\u00A0", " ", regex=False).str.strip()
+
+    dfN = scope_df.copy()
+    if rol_col:
+        dfN[rol_col] = _clean_series(dfN[rol_col])
+    if cat_col:
+        dfN[cat_col] = _clean_series(dfN[cat_col])
+    if prob_col:
+        dfN[prob_col] = _clean_series(dfN[prob_col])
+
+    # Render Categorías
+    if rol_col and cat_col:
+        pv_cat = _aggregate_roles(dfN, target_col=cat_col, rol_col=rol_col)
+        _render_cards_from_pivot(pv_cat, "Categorías (GL / FP / Mixtas)")
+    else:
+        st.info("Falta columna de **Rol/Tipo** o de **Categoría** para este bloque.")
+
+    # Render Problemáticas
+    if rol_col and prob_col:
+        pv_prob = _aggregate_roles(dfN, target_col=prob_col, rol_col=rol_col)
+        _render_cards_from_pivot(pv_prob, "Problemáticas (GL / FP / Mixtas)")
+    else:
+        st.info("Falta columna de **Rol/Tipo** o de **Problemática** para este bloque.")
 
 # ============================= MAIN DASHBOARD =============================
 if dash_file:
@@ -720,7 +892,7 @@ if dash_file:
 
             dsel = df_dash[df_dash["Delegación"] == sel]
 
-            # 🔸 Toggle: usar total de TODAS las delegaciones o solo la seleccionada
+            # Toggle: usar total de TODAS las delegaciones o solo la seleccionada
             scope_df, using_total = _scope_total_o_seleccion(
                 df_selected=dsel,
                 df_all_options=df_dash,
@@ -762,6 +934,9 @@ if dash_file:
 
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
+
+            # 🔻 NUEVO: Categorías y Problemáticas (por rol) — respetando el mismo scope
+            _render_categorias_y_problemas(scope_df, place_after=titulo_h3)
 
     # =================== TAB 2: POR DIRECCIÓN REGIONAL ===================
     with tabs[1]:
@@ -818,6 +993,9 @@ if dash_file:
 
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
+
+            # 🔻 NUEVO: Categorías y Problemáticas (por rol) — respetando el mismo scope
+            _render_categorias_y_problemas(scope_df, place_after=titulo_h3)
 
     # =================== TAB 3: SOLO GOBIERNO LOCAL (PROVINCIA) ==========
     with tabs[2]:
@@ -880,6 +1058,8 @@ if dash_file:
                             "</ul></div>",
                             unsafe_allow_html=True
                         )
+
+                # 🔻 NUEVO: Categorías y Problemáticas (por rol) — respetando el mismo scope
+                _render_categorias_y_problemas(scope_df, place_after=titulo_h3)
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
-
