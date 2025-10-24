@@ -442,7 +442,6 @@ def _to_num_safe(x, pct=False):
         return float(m.group()) if m else 0.0
 
 def _big_number(value, label, helptext=None, big_px=80):
-    """Muestra label arriba y el número abajo más grande."""
     c = st.container()
     with c:
         st.markdown(f"""
@@ -541,7 +540,6 @@ def _resumen_avance(col, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind):
               <div style="font-size:16px;font-weight:700;">{comp_p:.0f}%</div>
             </div>""", unsafe_allow_html=True)
 
-        # Texto arriba y número grande abajo (no cambiar)
         st.markdown(
             f"""<div style="text-align:center;border:1px solid #e3e3e3;border-top:0;padding:14px;border-radius:0 0 8px 8px;background:#ffffff;color:#111;">
             <div style="font-size:13px;color:#666;margin-bottom:6px;">Total de indicadores (Gobierno Local + Fuerza Pública)</div>
@@ -633,7 +631,6 @@ def _lineas_tot_y_desglose(agg: pd.Series):
         mx = int(agg.get("Líneas de Acción Mixtas", 0) or 0)
         total = gl + fp + mx
         return total, gl, fp, mx, True
-    # Fallback al total antiguo
     total = int(agg.get("Líneas de Acción", 0) or 0)
     return total, None, None, None, False
 
@@ -657,23 +654,6 @@ def _render_lineas_block(agg: pd.Series):
               <div style="font-size:13px;color:#666;margin-bottom:4px;">Mixtas</div>
               <div style="font-size:32px;font-weight:800;color:#111;">{mx}</div>
             </div>""", unsafe_allow_html=True)
-
-# --------- helper: Totales del filtro (nuevo) --------------------------
-def _totales_del_filtro(df_scope: pd.DataFrame, key: str):
-    show = st.toggle("Mostrar totales del filtro", value=False, key=key)
-    if not show:
-        return
-    # Manejar ausencia de columnas con defaults
-    n_reg = len(df_scope)
-    n_del = df_scope["Delegación"].dropna().astype(str).nunique() if "Delegación" in df_scope.columns else 0
-    n_arc = df_scope["Archivo"].dropna().astype(str).nunique() if "Archivo" in df_scope.columns else 0
-
-    c1, c2, c3 = st.columns(3)
-    _big_number(n_reg, "Registros en el filtro", big_px=64)
-    with c2:
-        _big_number(n_del, "Delegaciones únicas", big_px=64)
-    with c3:
-        _big_number(n_arc, "Archivos únicos", big_px=64)
 
 # ============================= MAIN DASHBOARD =============================
 if dash_file:
@@ -730,9 +710,6 @@ if dash_file:
 
             st.markdown(f"<h3 style='text-align:center;margin-top:0;color:#111;'>{sel}</h3>", unsafe_allow_html=True)
 
-            # Totales del filtro (nuevo)
-            _totales_del_filtro(dsel, key="totales_deleg")
-
             # Líneas de Acción (total + breakdown si existe)
             _render_lineas_block(agg)
 
@@ -784,9 +761,6 @@ if dash_file:
 
             st.markdown(f"<h3 style='text-align:center;margin-top:0;color:#111;'>{sel_dr}</h3>", unsafe_allow_html=True)
 
-            # Totales del filtro (nuevo)
-            _totales_del_filtro(df_dr, key="totales_dr")
-
             # Líneas de Acción (total + breakdown)
             _render_lineas_block(agg)
 
@@ -824,9 +798,6 @@ if dash_file:
                 st.info("No hay registros para esa provincia.")
             else:
                 agg = df_prov.select_dtypes(include=[np.number]).sum(numeric_only=True)
-
-                # Totales del filtro (nuevo)
-                _totales_del_filtro(df_prov, key="totales_prov")
 
                 # Líneas de Acción (total + breakdown)
                 _render_lineas_block(agg)
@@ -868,4 +839,5 @@ if dash_file:
                     )
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
+
 
