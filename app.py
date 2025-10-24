@@ -655,6 +655,24 @@ def _render_lineas_block(agg: pd.Series):
               <div style="font-size:32px;font-weight:800;color:#111;">{mx}</div>
             </div>""", unsafe_allow_html=True)
 
+# --------- helper: SOLO total de registros del filtro (minimal) --------
+def _total_registros_min(df_scope: pd.DataFrame, key: str):
+    show = st.toggle("Mostrar total de datos del filtro", value=False, key=key)
+    if not show:
+        return
+    n_reg = len(df_scope)
+    st.markdown(
+        f"""
+        <div style="margin:8px 0 0 0; text-align:center;">
+          <span style="display:inline-block;padding:8px 14px;border-radius:999px;border:1px solid #e3e3e3;background:#ffffff;color:#111;">
+            <span style="font-size:13px;color:#666;margin-right:8px;">Total de datos del filtro</span>
+            <span style="font-size:24px;font-weight:900;line-height:1;">{n_reg}</span>
+          </span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
 # ============================= MAIN DASHBOARD =============================
 if dash_file:
     try:
@@ -710,6 +728,9 @@ if dash_file:
 
             st.markdown(f"<h3 style='text-align:center;margin-top:0;color:#111;'>{sel}</h3>", unsafe_allow_html=True)
 
+            # 🔹 Total de datos del filtro (minimal, opcional)
+            _total_registros_min(dsel, key="tot_min_deleg")
+
             # Líneas de Acción (total + breakdown si existe)
             _render_lineas_block(agg)
 
@@ -761,6 +782,9 @@ if dash_file:
 
             st.markdown(f"<h3 style='text-align:center;margin-top:0;color:#111;'>{sel_dr}</h3>", unsafe_allow_html=True)
 
+            # 🔹 Total de datos del filtro (minimal, opcional)
+            _total_registros_min(df_dr, key="tot_min_dr")
+
             # Líneas de Acción (total + breakdown)
             _render_lineas_block(agg)
 
@@ -798,6 +822,9 @@ if dash_file:
                 st.info("No hay registros para esa provincia.")
             else:
                 agg = df_prov.select_dtypes(include=[np.number]).sum(numeric_only=True)
+
+                # 🔹 Total de datos del filtro (minimal, opcional)
+                _total_registros_min(df_prov, key="tot_min_prov")
 
                 # Líneas de Acción (total + breakdown)
                 _render_lineas_block(agg)
