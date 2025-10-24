@@ -463,12 +463,13 @@ COLOR_AZUL_H = "#1F4E79"
 def _bar_avance(pcts_tuple, title=""):
     labels = ["Sin actividades", "Con actividades", "Cumplida"]
     values = list(pcts_tuple)
+    # Colores fijados: Rojo, Amarillo, Verde
     colors = [COLOR_ROJO, COLOR_AMARIL, COLOR_VERDE]
 
     fig, ax = plt.subplots(figsize=(5.5, 3.5))
     fig.patch.set_facecolor("#ffffff")
     ax.set_facecolor("#ffffff")
-    ax.bar(labels, values)
+    ax.bar(labels, values, color=colors)  # <— colores restaurados
     ax.set_ylim(0, 100)
     ax.set_ylabel("%", color="#111")
     ax.set_title(title, color="#111")
@@ -722,7 +723,7 @@ if dash_file:
             # 🔸 Toggle: usar total de TODAS las delegaciones o solo la seleccionada
             scope_df, using_total = _scope_total_o_seleccion(
                 df_selected=dsel,
-                df_all_options=df_dash,   # todas las delegaciones (todas las opciones del filtro)
+                df_all_options=df_dash,
                 key="toggle_total_deleg",
                 etiqueta_plural="delegaciones"
             )
@@ -745,13 +746,9 @@ if dash_file:
             titulo_h3 = "Total (todas las delegaciones)" if using_total else sel
             st.markdown(f"<h3 style='text-align:center;margin-top:0;color:#111;'>{titulo_h3}</h3>", unsafe_allow_html=True)
 
-            # Líneas de Acción (total + breakdown si existe)
             _render_lineas_block(agg)
-
-            # Gráfica (título solicitado)
             _bar_avance((sin_p, con_p, comp_p), title="Total de indicadores (Gobierno Local + Fuerza Pública)")
 
-            # Paneles GL/FP
             top_gl, top_fp = st.columns(2)
             gl_tot = agg.get("Indicadores Gobierno Local", 0)
             gl_sin_n  = agg.get("GL Sin actividades (n)", 0); gl_con_n  = agg.get("GL Con actividades (n)", 0); gl_comp_n = agg.get("GL Completos (n)", 0)
@@ -777,10 +774,9 @@ if dash_file:
 
         df_dr_sel = df_dash[df_dash["DR_inferida"] == sel_dr]
 
-        # 🔸 Toggle: usar total de TODAS las DR o solo la seleccionada
         scope_df, using_total = _scope_total_o_seleccion(
             df_selected=df_dr_sel,
-            df_all_options=df_dash,     # todas las DR (todas las opciones del filtro)
+            df_all_options=df_dash,
             key="toggle_total_dr",
             etiqueta_plural="direcciones regionales"
         )
@@ -806,10 +802,7 @@ if dash_file:
             titulo_h3 = "Total (todas las DR)" if using_total else sel_dr
             st.markdown(f"<h3 style='text-align:center;margin-top:0;color:#111;'>{titulo_h3}</h3>", unsafe_allow_html=True)
 
-            # Líneas de Acción (total + breakdown)
             _render_lineas_block(agg)
-
-            # Gráfico con el título solicitado
             _bar_avance((sin_p, con_p, comp_p), title="Total de indicadores (Gobierno Local + Fuerza Pública)")
 
             top_gl, top_fp = st.columns(2)
@@ -839,10 +832,9 @@ if dash_file:
 
             df_prov_sel = df_dash[df_dash[prov_col].astype(str) == sel_prov]
 
-            # 🔸 Toggle: usar total de TODAS las provincias o solo la seleccionada
             scope_df, using_total = _scope_total_o_seleccion(
                 df_selected=df_prov_sel,
-                df_all_options=df_dash,   # todas las provincias (todas las opciones del filtro)
+                df_all_options=df_dash,
                 key="toggle_total_prov",
                 etiqueta_plural="provincias"
             )
@@ -852,10 +844,8 @@ if dash_file:
             else:
                 agg = scope_df.select_dtypes(include=[np.number]).sum(numeric_only=True)
 
-                # Líneas de Acción (total + breakdown)
                 _render_lineas_block(agg)
 
-                # TOTAL SOLO GL (porque esta pestaña es GL)
                 gl_tot = agg.get("Indicadores Gobierno Local", 0)
                 gl_sin_n  = agg.get("GL Sin actividades (n)", 0)
                 gl_con_n  = agg.get("GL Con actividades (n)", 0)
@@ -874,13 +864,11 @@ if dash_file:
                     unsafe_allow_html=True
                 )
 
-                # Gráfico con el título solicitado para GL
                 _bar_avance((gl_sin_p, gl_con_p, gl_comp_p), title="Total de indicadores (Gobierno Local)")
 
                 _panel_tres(st.container(), "Gobierno Local",
                             gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
 
-                # Delegaciones de la provincia — solo cuando NO estamos en total
                 if not using_total:
                     delegs = sorted(df_prov_sel["Delegación"].dropna().astype(str).unique().tolist()) if "Delegación" in df_prov_sel.columns else []
                     if delegs:
@@ -894,6 +882,4 @@ if dash_file:
                         )
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
-
-
 
