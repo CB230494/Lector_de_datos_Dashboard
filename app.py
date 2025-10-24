@@ -6,6 +6,7 @@
 # - GL/FP por conteo de filas; Avance por columnas "Avance" (trimestres)
 # - Filtros anti falsos positivos (años, % como cantidades, etc.)
 # - Descarga del consolidado a Excel
+# - Dashboard con filtros + Categorías/Problemáticas por rol (GL/FP/Mixtas)
 # ================================================================
 
 import io, re, unicodedata
@@ -654,13 +655,8 @@ def _render_lineas_block(agg: pd.Series):
               <div style="font-size:32px;font-weight:800;color:#111;">{mx}</div>
             </div>""", unsafe_allow_html=True)
 
-# --------- helper: toggle que suma TODAS las opciones del filtro -------
+# --------- toggle: suma TODAS las opciones del filtro -------------------
 def _scope_total_o_seleccion(df_selected: pd.DataFrame, df_all_options: pd.DataFrame, key: str, etiqueta_plural: str):
-    """
-    Si el toggle está ON, devuelve df_all_options (todas las opciones del filtro).
-    Si está OFF, devuelve df_selected (solo la selección actual).
-    Además muestra una pastilla con 'Total de datos del filtro'.
-    """
     use_total = st.toggle("Habilitar mostrar total de datos", value=False, key=key)
     scope = df_all_options if use_total else df_selected
     st.markdown(
@@ -694,37 +690,36 @@ def _pick_col(df: pd.DataFrame, candidates_exact: List[str], substrs: List[str])
 def _pick_categoria_col(df: pd.DataFrame) -> Optional[str]:
     return _pick_col(
         df,
-        candidates_exact=["categoria","categoría"],
-        substrs=["categori"]
+        candidates_exact=["categoria","categoría","eje","linea","línea","categoria gl","categoria fp"],
+        substrs=["categori","eje","linea","línea"]
     )
 
 def _pick_problematica_col(df: pd.DataFrame) -> Optional[str]:
     return _pick_col(
         df,
-        candidates_exact=["problematica","problemática","problema","descriptor"],
-        substrs=["problem","descrip"]
+        candidates_exact=["problematica","problemática","problema","descriptor","tema","incidente"],
+        substrs=["problem","descrip","tema","inciden"]
     )
 
 def _pick_rol_col(df: pd.DataFrame) -> Optional[str]:
+    # Prioriza 'Lider' (como en tu ejemplo), y entiende variantes.
     return _pick_col(
         df,
-        candidates_exact=["rol","tipo","responsable","lider","líder","encargado"],
-        substrs=["rol","tipo","respons","lider","encarg","gl","fp","mixt"]
+        candidates_exact=["lider","líder","rol","tipo","responsable","encargado","actor","responsable principal"],
+        substrs=["lider","líder","rol","tipo","respons","encarg","actor","gl","fp","mixt","ambos"]
     )
 
 def _map_rol_value(x: str) -> str:
-    """Normaliza a 'GL', 'FP' o 'Mixtas' según el contenido textual."""
+    """Normaliza a 'Gobierno Local', 'Fuerza Pública' o 'Mixtas' según el contenido textual."""
     s = _norm_str(x)
     if any(k in s for k in ["mixt", "ambos", "compartid"]):
         return "Mixtas"
-    if any(k in s for k in ["gl", "gobierno local", "municip", "alcald"]):
+    if s in ("gl", "g l") or "gobierno local" in s or "municip" in s or "alcald" in s:
         return "Gobierno Local"
-    if any(k in s for k in ["fp", "fuerza publica", "fuerza pública", "policia", "policía"]):
+    if s in ("fp", "f p") or "fuerza publica" in s or "fuerza pública" in s or "policia" in s or "policía" in s:
         return "Fuerza Pública"
-    # fallback: intenta detectar siglas sueltas
-    if s.strip() == "gl": return "Gobierno Local"
-    if s.strip() == "fp": return "Fuerza Pública"
-    return "Gobierno Local"  # predetermina a GL si no se reconoce
+    # fallback neutro → GL (para no perder el registro)
+    return "Gobierno Local"
 
 def _aggregate_roles(df_scope: pd.DataFrame, target_col: str, rol_col: str) -> pd.DataFrame:
     """Agrupa por (target=Categoría/Problemática) y Rol (GL/FP/Mixtas) → tabla pivot."""
@@ -737,7 +732,6 @@ def _aggregate_roles(df_scope: pd.DataFrame, target_col: str, rol_col: str) -> p
     tmp["__ONE__"] = 1
     agg = tmp.groupby([target_col, "__ROL__"])["__ONE__"].sum().reset_index()
     pivot = agg.pivot(index=target_col, columns="__ROL__", values="__ONE__").fillna(0).astype(int)
-    # añade columnas ausentes para orden consistente
     for col in ["Gobierno Local", "Fuerza Pública", "Mixtas"]:
         if col not in pivot.columns:
             pivot[col] = 0
@@ -765,7 +759,6 @@ def _render_cards_from_pivot(pivot: pd.DataFrame, title: str, max_inline: int = 
         st.info("No hay datos suficientes para este bloque (se requieren columnas de rol y de contenido).")
         return
 
-    # muestra primeras N tarjetas y el resto en expander
     items = list(pivot.itertuples())
     head, tail = items[:max_inline], items[max_inline:]
 
@@ -777,7 +770,6 @@ def _render_cards_from_pivot(pivot: pd.DataFrame, title: str, max_inline: int = 
         </div>
         """
 
-    # cuadrícula responsiva simple (3 columnas aprox)
     cols = st.columns(3, gap="small")
     for i, row in enumerate(head):
         name = str(row.Index)
@@ -800,6 +792,23 @@ def _render_cards_from_pivot(pivot: pd.DataFrame, title: str, max_inline: int = 
                 with cols2[i % 3]:
                     st.markdown(_card_html(name, gl, fp, mx, total), unsafe_allow_html=True)
 
+# ===== Overrides manuales para columnas (Categoría / Problemática / Rol) =====
+def _string_cols(df: pd.DataFrame) -> List[str]:
+    return [c for c in df.columns if df[c].dtype == object]
+
+def _get_override(name: str) -> Optional[str]:
+    return st.session_state.get(name) or None
+
+def _set_override_default(name: str, value: Optional[str]):
+    if name not in st.session_state:
+        st.session_state[name] = value
+
+def _resolve_col(df: pd.DataFrame, auto_pick_fn, override_name: str) -> Optional[str]:
+    ov = st.session_state.get(override_name)
+    if ov and ov != "(auto)" and ov in df.columns:
+        return ov
+    return auto_pick_fn(df)
+
 def _render_categorias_y_problemas(scope_df: pd.DataFrame, place_after: str):
     """
     Renderiza dos bloques:
@@ -810,24 +819,24 @@ def _render_categorias_y_problemas(scope_df: pd.DataFrame, place_after: str):
     if scope_df is None or scope_df.empty:
         return
 
-    cat_col = _pick_categoria_col(scope_df)
-    prob_col = _pick_problematica_col(scope_df)
-    rol_col = _pick_rol_col(scope_df)
+    # Usar overrides si existen; si no, detección automática
+    cat_col = _resolve_col(scope_df, _pick_categoria_col, "ov_col_categoria")
+    prob_col = _resolve_col(scope_df, _pick_problematica_col, "ov_col_problematica")
+    rol_col  = _resolve_col(scope_df, _pick_rol_col, "ov_col_rol")
 
     st.markdown("<hr/>", unsafe_allow_html=True)
     st.markdown("<h3 style='margin:0;color:#111;'>📦 Categorías y Problemáticas (por rol)</h3>", unsafe_allow_html=True)
     st.caption(f"Basado en el subconjunto activo del filtro: **{place_after}**.")
 
     if not rol_col and not (cat_col or prob_col):
-        st.info("Para mostrar estos bloques, el Excel debe incluir columnas de **Rol/Tipo** y **Categoría/Problemática**.")
+        st.info("Para mostrar estos bloques, el Excel debe incluir columnas de **Lider/Rol/Tipo** y **Categoría/Problemática**.")
         return
     if not rol_col:
-        st.info("No se detectó columna de **Rol/Tipo/Responsable** (usada para clasificar en GL/FP/Mixtas).")
+        st.info("No se detectó columna de **Lider/Rol/Tipo** (usada para GL/FP/Mixtas).")
     if not (cat_col or prob_col):
         st.info("No se detectaron columnas de **Categoría/Problemática**.")
         return
 
-    # Normaliza texto y evita espacios raros
     def _clean_series(s):
         return s.astype(str).str.replace("\u00A0", " ", regex=False).str.strip()
 
@@ -839,19 +848,19 @@ def _render_categorias_y_problemas(scope_df: pd.DataFrame, place_after: str):
     if prob_col:
         dfN[prob_col] = _clean_series(dfN[prob_col])
 
-    # Render Categorías
+    # Bloque: Categorías
     if rol_col and cat_col:
         pv_cat = _aggregate_roles(dfN, target_col=cat_col, rol_col=rol_col)
         _render_cards_from_pivot(pv_cat, "Categorías (GL / FP / Mixtas)")
     else:
-        st.info("Falta columna de **Rol/Tipo** o de **Categoría** para este bloque.")
+        st.info("Falta columna de **Lider/Rol/Tipo** o de **Categoría** para este bloque.")
 
-    # Render Problemáticas
+    # Bloque: Problemáticas
     if rol_col and prob_col:
         pv_prob = _aggregate_roles(dfN, target_col=prob_col, rol_col=rol_col)
         _render_cards_from_pivot(pv_prob, "Problemáticas (GL / FP / Mixtas)")
     else:
-        st.info("Falta columna de **Rol/Tipo** o de **Problemática** para este bloque.")
+        st.info("Falta columna de **Lider/Rol/Tipo** o de **Problemática** para este bloque.")
 
 # ============================= MAIN DASHBOARD =============================
 if dash_file:
@@ -861,6 +870,41 @@ if dash_file:
         df_dash = pd.read_excel(dash_file)
 
     df_dash = _ensure_numeric(df_dash.copy())
+
+    # ===== Diagnóstico + overrides de columnas =====
+    with st.expander("🛠️ Detección avanzada (opcional)", expanded=False):
+        st.caption("Si no se detectan automáticamente tus columnas, selecciona aquí cuáles usar.")
+        auto_cat = _pick_categoria_col(df_dash)
+        auto_prob = _pick_problematica_col(df_dash)
+        auto_rol = _pick_rol_col(df_dash)
+
+        _set_override_default("ov_col_categoria", auto_cat)
+        _set_override_default("ov_col_problematica", auto_prob)
+        _set_override_default("ov_col_rol", auto_rol)
+
+        st.write("**Detectado automáticamente:**")
+        st.write(f"- Categoría: `{auto_cat}`")
+        st.write(f"- Problemática: `{auto_prob}`")
+        st.write(f"- Lider/Rol/Tipo: `{auto_rol}`")
+
+        cols_list = _string_cols(df_dash)
+        st.markdown("---")
+        st.write("**Forzar columnas manualmente (override):**")
+        st.session_state["ov_col_categoria"] = st.selectbox(
+            "Columna de Categoría", ["(auto)"] + cols_list,
+            index=(["(auto)"] + cols_list).index(auto_cat) if auto_cat in cols_list else 0,
+            key="ov_cat_sel"
+        )
+        st.session_state["ov_col_problematica"] = st.selectbox(
+            "Columna de Problemática", ["(auto)"] + cols_list,
+            index=(["(auto)"] + cols_list).index(auto_prob) if auto_prob in cols_list else 0,
+            key="ov_prob_sel"
+        )
+        st.session_state["ov_col_rol"] = st.selectbox(
+            "Columna de Lider/Rol/Tipo (GL/FP/Mixta)", ["(auto)"] + cols_list,
+            index=(["(auto)"] + cols_list).index(auto_rol) if auto_rol in cols_list else 0,
+            key="ov_rol_sel"
+        )
 
     # DR inferida
     dr_col = _pick_dr_column(df_dash)
@@ -877,7 +921,7 @@ if dash_file:
     else:
         df_dash["DR_inferida"] = df_dash.get("Delegación", "").apply(_infer_dr_from_delegacion)
 
-    # Pestañas (mismo Excel para las 3)
+    # Pestañas
     tabs = st.tabs(["🏢 Por Delegación", "🗺️ Por Dirección Regional", "🏛️ Gobierno Local (por Provincia)"])
 
     # ======================= TAB 1: POR DELEGACIÓN =======================
@@ -892,7 +936,6 @@ if dash_file:
 
             dsel = df_dash[df_dash["Delegación"] == sel]
 
-            # Toggle: usar total de TODAS las delegaciones o solo la seleccionada
             scope_df, using_total = _scope_total_o_seleccion(
                 df_selected=dsel,
                 df_all_options=df_dash,
@@ -935,7 +978,7 @@ if dash_file:
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
-            # 🔻 NUEVO: Categorías y Problemáticas (por rol) — respetando el mismo scope
+            # Categorías y Problemáticas (por rol)
             _render_categorias_y_problemas(scope_df, place_after=titulo_h3)
 
     # =================== TAB 2: POR DIRECCIÓN REGIONAL ===================
@@ -994,7 +1037,7 @@ if dash_file:
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
-            # 🔻 NUEVO: Categorías y Problemáticas (por rol) — respetando el mismo scope
+            # Categorías y Problemáticas (por rol)
             _render_categorias_y_problemas(scope_df, place_after=titulo_h3)
 
     # =================== TAB 3: SOLO GOBIERNO LOCAL (PROVINCIA) ==========
@@ -1059,7 +1102,7 @@ if dash_file:
                             unsafe_allow_html=True
                         )
 
-                # 🔻 NUEVO: Categorías y Problemáticas (por rol) — respetando el mismo scope
+                # Categorías y Problemáticas (por rol)
                 _render_categorias_y_problemas(scope_df, place_after=titulo_h3)
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
