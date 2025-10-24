@@ -468,7 +468,7 @@ def _bar_avance(pcts_tuple, title=""):
     fig, ax = plt.subplots(figsize=(5.5, 3.5))
     fig.patch.set_facecolor("#ffffff")
     ax.set_facecolor("#ffffff")
-    ax.bar(labels, values, color=colors)
+    ax.bar(labels, values)
     ax.set_ylim(0, 100)
     ax.set_ylabel("%", color="#111")
     ax.set_title(title, color="#111")
@@ -655,23 +655,30 @@ def _render_lineas_block(agg: pd.Series):
               <div style="font-size:32px;font-weight:800;color:#111;">{mx}</div>
             </div>""", unsafe_allow_html=True)
 
-# --------- helper: SOLO total de registros del filtro (minimal) --------
-def _total_registros_min(df_scope: pd.DataFrame, key: str):
-    show = st.toggle("Mostrar total de datos del filtro", value=False, key=key)
-    if not show:
-        return
-    n_reg = len(df_scope)
+# --------- helper: toggle que suma TODAS las opciones del filtro -------
+def _scope_total_o_seleccion(df_selected: pd.DataFrame, df_all_options: pd.DataFrame, key: str, etiqueta_plural: str):
+    """
+    Si el toggle está ON, devuelve df_all_options (todas las opciones del filtro).
+    Si está OFF, devuelve df_selected (solo la selección actual).
+    Además muestra una pastilla con 'Total de datos del filtro'.
+    """
+    use_total = st.toggle("Habilitar mostrar total de datos", value=False, key=key)
+    scope = df_all_options if use_total else df_selected
+    # Pastilla minimalista
     st.markdown(
         f"""
         <div style="margin:8px 0 0 0; text-align:center;">
           <span style="display:inline-block;padding:8px 14px;border-radius:999px;border:1px solid #e3e3e3;background:#ffffff;color:#111;">
             <span style="font-size:13px;color:#666;margin-right:8px;">Total de datos del filtro</span>
-            <span style="font-size:24px;font-weight:900;line-height:1;">{n_reg}</span>
+            <span style="font-size:24px;font-weight:900;line-height:1;">{len(scope)}</span>
           </span>
         </div>
         """,
         unsafe_allow_html=True
     )
+    if use_total:
+        st.caption(f"Mostrando la **totalidad** de {etiqueta_plural}.")
+    return scope, use_total
 
 # ============================= MAIN DASHBOARD =============================
 if dash_file:
@@ -711,7 +718,16 @@ if dash_file:
             sel = st.selectbox("Delegación Policial", delegs, index=0, key="sel_deleg")
 
             dsel = df_dash[df_dash["Delegación"] == sel]
-            agg = dsel.select_dtypes(include=[np.number]).sum(numeric_only=True)
+
+            # 🔸 Toggle: usar total de TODAS las delegaciones o solo la seleccionada
+            scope_df, using_total = _scope_total_o_seleccion(
+                df_selected=dsel,
+                df_all_options=df_dash,   # todas las delegaciones (todas las opciones del filtro)
+                key="toggle_total_deleg",
+                etiqueta_plural="delegaciones"
+            )
+
+            agg = scope_df.select_dtypes(include=[np.number]).sum(numeric_only=True)
 
             total_ind = agg.get("Total Indicadores", np.nan)
             if np.isnan(total_ind):
@@ -726,10 +742,8 @@ if dash_file:
 
             sin_p, con_p, comp_p = _pct(sin_n, total_ind), _pct(con_n, total_ind), _pct(comp_n, total_ind)
 
-            st.markdown(f"<h3 style='text-align:center;margin-top:0;color:#111;'>{sel}</h3>", unsafe_allow_html=True)
-
-            # 🔹 Total de datos del filtro (minimal, opcional)
-            _total_registros_min(dsel, key="tot_min_deleg")
+            titulo_h3 = "Total (todas las delegaciones)" if using_total else sel
+            st.markdown(f"<h3 style='text-align:center;margin-top:0;color:#111;'>{titulo_h3}</h3>", unsafe_allow_html=True)
 
             # Líneas de Acción (total + breakdown si existe)
             _render_lineas_block(agg)
@@ -761,11 +775,20 @@ if dash_file:
 
         sel_dr = st.selectbox("Dirección Regional", drs, index=idx_default, key="sel_dr")
 
-        df_dr = df_dash[df_dash["DR_inferida"] == sel_dr]
-        if df_dr.empty:
-            st.info("No hay registros para esa DR.")
+        df_dr_sel = df_dash[df_dash["DR_inferida"] == sel_dr]
+
+        # 🔸 Toggle: usar total de TODAS las DR o solo la seleccionada
+        scope_df, using_total = _scope_total_o_seleccion(
+            df_selected=df_dr_sel,
+            df_all_options=df_dash,     # todas las DR (todas las opciones del filtro)
+            key="toggle_total_dr",
+            etiqueta_plural="direcciones regionales"
+        )
+
+        if scope_df.empty:
+            st.info("No hay registros para esa selección.")
         else:
-            agg = df_dr.select_dtypes(include=[np.number]).sum(numeric_only=True)
+            agg = scope_df.select_dtypes(include=[np.number]).sum(numeric_only=True)
 
             total_ind = agg.get("Total Indicadores", np.nan)
             if np.isnan(total_ind):
@@ -780,10 +803,8 @@ if dash_file:
 
             sin_p, con_p, comp_p = _pct(sin_n, total_ind), _pct(con_n, total_ind), _pct(comp_n, total_ind)
 
-            st.markdown(f"<h3 style='text-align:center;margin-top:0;color:#111;'>{sel_dr}</h3>", unsafe_allow_html=True)
-
-            # 🔹 Total de datos del filtro (minimal, opcional)
-            _total_registros_min(df_dr, key="tot_min_dr")
+            titulo_h3 = "Total (todas las DR)" if using_total else sel_dr
+            st.markdown(f"<h3 style='text-align:center;margin-top:0;color:#111;'>{titulo_h3}</h3>", unsafe_allow_html=True)
 
             # Líneas de Acción (total + breakdown)
             _render_lineas_block(agg)
@@ -816,20 +837,25 @@ if dash_file:
             provincias = sorted(df_dash[prov_col].dropna().astype(str).unique().tolist())
             sel_prov = st.selectbox("Provincia", provincias, index=0, key="sel_prov_only")
 
-            df_prov = df_dash[df_dash[prov_col].astype(str) == sel_prov]
+            df_prov_sel = df_dash[df_dash[prov_col].astype(str) == sel_prov]
 
-            if df_prov.empty:
-                st.info("No hay registros para esa provincia.")
+            # 🔸 Toggle: usar total de TODAS las provincias o solo la seleccionada
+            scope_df, using_total = _scope_total_o_seleccion(
+                df_selected=df_prov_sel,
+                df_all_options=df_dash,   # todas las provincias (todas las opciones del filtro)
+                key="toggle_total_prov",
+                etiqueta_plural="provincias"
+            )
+
+            if scope_df.empty:
+                st.info("No hay registros para esa selección.")
             else:
-                agg = df_prov.select_dtypes(include=[np.number]).sum(numeric_only=True)
-
-                # 🔹 Total de datos del filtro (minimal, opcional)
-                _total_registros_min(df_prov, key="tot_min_prov")
+                agg = scope_df.select_dtypes(include=[np.number]).sum(numeric_only=True)
 
                 # Líneas de Acción (total + breakdown)
                 _render_lineas_block(agg)
 
-                # TOTAL SOLO GL
+                # TOTAL SOLO GL (porque esta pestaña es GL)
                 gl_tot = agg.get("Indicadores Gobierno Local", 0)
                 gl_sin_n  = agg.get("GL Sin actividades (n)", 0)
                 gl_con_n  = agg.get("GL Con actividades (n)", 0)
@@ -842,8 +868,9 @@ if dash_file:
                 gl_con_p = _pct(gl_con_n, gl_tot)
                 gl_comp_p = _pct(gl_comp_n, gl_tot)
 
+                titulo_h3 = "Total (todas las provincias)" if using_total else f"Provincia: {sel_prov}"
                 st.markdown(
-                    f"<h3 style='text-align:center;margin-top:0;color:#111;'>Provincia: {sel_prov}</h3>",
+                    f"<h3 style='text-align:center;margin-top:0;color:#111;'>{titulo_h3}</h3>",
                     unsafe_allow_html=True
                 )
 
@@ -853,18 +880,20 @@ if dash_file:
                 _panel_tres(st.container(), "Gobierno Local",
                             gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
 
-                # Delegaciones de la provincia
-                delegs = sorted(df_prov["Delegación"].dropna().astype(str).unique().tolist()) if "Delegación" in df_prov.columns else []
-                if delegs:
-                    st.markdown(
-                        "<div style='margin-top:12px;background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:12px;'>"
-                        f"<div style='font-weight:700;margin-bottom:8px;color:#111;'>Delegaciones en {sel_prov}</div>"
-                        + "<ul style='margin:0 0 0 18px;color:#111;'>" +
-                        "".join([f"<li>{d}</li>" for d in delegs]) +
-                        "</ul></div>",
-                        unsafe_allow_html=True
-                    )
+                # Delegaciones de la provincia — solo cuando NO estamos en total
+                if not using_total:
+                    delegs = sorted(df_prov_sel["Delegación"].dropna().astype(str).unique().tolist()) if "Delegación" in df_prov_sel.columns else []
+                    if delegs:
+                        st.markdown(
+                            "<div style='margin-top:12px;background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:12px;'>"
+                            f"<div style='font-weight:700;margin-bottom:8px;color:#111;'>Delegaciones en {sel_prov}</div>"
+                            + "<ul style='margin:0 0 0 18px;color:#111;'>" +
+                            "".join([f"<li>{d}</li>" for d in delegs]) +
+                            "</ul></div>",
+                            unsafe_allow_html=True
+                        )
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
+
 
 
