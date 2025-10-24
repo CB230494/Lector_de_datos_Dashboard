@@ -681,131 +681,12 @@ def _scope_total_o_seleccion(df_selected: pd.DataFrame, df_all_options: pd.DataF
         st.caption(f"Mostrando la **totalidad** de {etiqueta_plural}.")
     return scope, use_total
 
-# =================== TOTAL Y LINEAS: helpers (NUEVO) ====================
-def _try_read_total_y_lineas(xls) -> Optional[pd.DataFrame]:
-    """Intenta leer la hoja 'TOTAL Y LINEAS'. Devuelve None si no existe."""
-    try:
-        df = pd.read_excel(xls, sheet_name="TOTAL Y LINEAS")
-        df.columns = [str(c).strip() for c in df.columns]
-        return df
-    except Exception:
-        return None
-
-def _pick_col_like(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
-    """Devuelve el nombre real de la primera columna que coincida o contenga el patrón."""
-    def _norm_col(s: str) -> str:
-        s = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode("ascii")
-        s = re.sub(r"[\s_\-]+", " ", s).strip().lower()
-        return s
-
-    norm_map = {_norm_col(c): c for c in df.columns}
-    for want in candidates:
-        want_n = _norm_col(want)
-        if want_n in norm_map:
-            return norm_map[want_n]
-    for want in candidates:
-        want_n = re.escape(want.lower())
-        for knorm, real in norm_map.items():
-            if re.search(want_n, knorm):
-                return real
-    return None
-
-def _filter_total_y_lineas_scope(df_tyl: pd.DataFrame,
-                                 scope_df: pd.DataFrame,
-                                 prov_col_dash: Optional[str],
-                                 dr_col_dash: Optional[str]) -> pd.DataFrame:
-    """Aplica el mismo alcance del dashboard a TOTAL Y LINEAS."""
-    if df_tyl is None or df_tyl.empty or scope_df is None or scope_df.empty:
-        return pd.DataFrame()
-
-    col_deleg_tyl = _pick_col_like(df_tyl, ["delegacion", "delegación"])
-    col_prov_tyl  = _pick_col_like(df_tyl, ["provincia", "province", "prov"])
-    col_dr_tyl    = _pick_col_like(df_tyl, ["direccion regional", "direccionregional", "dr", "regional"])
-
-    # 1) Delegación si existe en ambos
-    if col_deleg_tyl and "Delegación" in scope_df.columns:
-        keys = set(scope_df["Delegación"].dropna().astype(str))
-        return df_tyl[df_tyl[col_deleg_tyl].astype(str).isin(keys)]
-
-    # 2) Provincia
-    if col_prov_tyl and prov_col_dash and prov_col_dash in scope_df.columns:
-        keys = set(scope_df[prov_col_dash].dropna().astype(str))
-        return df_tyl[df_tyl[col_prov_tyl].astype(str).isin(keys)]
-
-    # 3) DR
-    if col_dr_tyl:
-        if "DR_inferida" in scope_df.columns:
-            keys = set(scope_df["DR_inferida"].dropna().astype(str))
-            def _norm_dr(x):
-                if pd.isna(x): return ""
-                s = str(x)
-                m = re.search(r"(r\s*\d+)", s, flags=re.IGNORECASE)
-                return m.group(1).upper().replace(" ", "") if m else s
-            return df_tyl[df_tyl[col_dr_tyl].apply(_norm_dr).isin({_norm_dr(k) for k in keys})]
-        if dr_col_dash and dr_col_dash in scope_df.columns:
-            keys = set(scope_df[dr_col_dash].dropna().astype(str))
-            return df_tyl[df_tyl[col_dr_tyl].astype(str).isin(keys)]
-
-    return df_tyl.copy()
-
-def _render_categoria_problematica(df_tyl_sel: pd.DataFrame, titulo_ctx: str):
-    """Muestra tablas y top-N para 'Categoría' y 'Problemática' dentro del alcance filtrado."""
-    if df_tyl_sel.empty:
-        st.info("No hay filas en 'TOTAL Y LINEAS' para esta selección.")
-        return
-
-    col_cat = _pick_col_like(df_tyl_sel, ["categoria", "categoría"])
-    col_prob = _pick_col_like(df_tyl_sel, ["problematica", "problemática", "problema"])
-
-    st.subheader(f"🔎 Detalle (TOTAL Y LINEAS) — {titulo_ctx}")
-
-    if not col_cat and not col_prob:
-        st.warning("No se encontraron columnas **Categoría** ni **Problemática** en la hoja 'TOTAL Y LINEAS'.")
-        with st.expander("Vista previa de columnas detectadas"):
-            st.write(list(df_tyl_sel.columns))
-        return
-
-    # Conteos
-    if col_cat:
-        cat_counts = (
-            df_tyl_sel[col_cat].dropna().astype(str)
-            .str.strip().replace({"": np.nan}).dropna()
-            .value_counts().rename_axis("Categoría").reset_index(name="Cantidad")
-        )
-        st.markdown("**Categoría (conteo)**")
-        st.dataframe(cat_counts, use_container_width=True, hide_index=True)
-        topn = cat_counts.head(12).set_index("Categoría")["Cantidad"]
-        st.bar_chart(topn)
-
-    if col_prob:
-        prob_counts = (
-            df_tyl_sel[col_prob].dropna().astype(str)
-            .str.strip().replace({"": np.nan}).dropna()
-            .value_counts().rename_axis("Problemática").reset_index(name="Cantidad")
-        )
-        st.markdown("**Problemática (conteo)**")
-        st.dataframe(prob_counts, use_container_width=True, hide_index=True)
-        topn = prob_counts.head(12).set_index("Problemática")["Cantidad"]
-        st.bar_chart(topn)
-
-    # Si existe una columna con cantidades mostramos sumas por categoría
-    col_total = _pick_col_like(df_tyl_sel, ["total", "lineas", "líneas", "cantidad", "conteo"])
-    if col_total and col_cat:
-        tmp = df_tyl_sel.copy()
-        tmp[col_total] = pd.to_numeric(tmp[col_total], errors="coerce").fillna(0)
-        sum_cat = tmp.groupby(col_cat, dropna=True)[col_total].sum().sort_values(ascending=False)
-        st.markdown("**Suma por Categoría (si aplica)**")
-        st.dataframe(sum_cat.rename("Suma").reset_index(), use_container_width=True, hide_index=True)
-
 # ============================= MAIN DASHBOARD =============================
 if dash_file:
     try:
         df_dash = pd.read_excel(dash_file, sheet_name="resumen")
     except Exception:
         df_dash = pd.read_excel(dash_file)
-
-    # NEW: Intentamos cargar 'TOTAL Y LINEAS'
-    df_total_y_lineas = _try_read_total_y_lineas(dash_file)
 
     df_dash = _ensure_numeric(df_dash.copy())
 
@@ -882,20 +763,6 @@ if dash_file:
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
-            # ============= EXTRA: TOTAL Y LINEAS (respetando el alcance) =============
-            if 'df_total_y_lineas' in locals() and df_total_y_lineas is not None:
-                df_tyl_sel = _filter_total_y_lineas_scope(
-                    df_tyl=df_total_y_lineas,
-                    scope_df=scope_df,              # <- usa el mismo alcance (selección o total)
-                    prov_col_dash=_pick_prov_column(df_dash),
-                    dr_col_dash=dr_col
-                )
-                ctx = "Total (todas las delegaciones)" if using_total else f"Delegación: {sel}"
-                with st.expander("📄 Ver Categoría y Problemática (TOTAL Y LINEAS)", expanded=False):
-                    _render_categoria_problematica(df_tyl_sel, ctx)
-            else:
-                st.caption("La hoja 'TOTAL Y LINEAS' no está disponible en el Excel.")
-
     # =================== TAB 2: POR DIRECCIÓN REGIONAL ===================
     with tabs[1]:
         st.subheader("Avance por Dirección Regional (DR)")
@@ -952,20 +819,6 @@ if dash_file:
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
-            # ============= EXTRA: TOTAL Y LINEAS (respetando el alcance) =============
-            if 'df_total_y_lineas' in locals() and df_total_y_lineas is not None:
-                df_tyl_sel = _filter_total_y_lineas_scope(
-                    df_tyl=df_total_y_lineas,
-                    scope_df=scope_df,
-                    prov_col_dash=_pick_prov_column(df_dash),
-                    dr_col_dash=dr_col
-                )
-                ctx = "Total (todas las DR)" if using_total else f"DR: {sel_dr}"
-                with st.expander("📄 Ver Categoría y Problemática (TOTAL Y LINEAS)", expanded=False):
-                    _render_categoria_problematica(df_tyl_sel, ctx)
-            else:
-                st.caption("La hoja 'TOTAL Y LINEAS' no está disponible en el Excel.")
-
     # =================== TAB 3: SOLO GOBIERNO LOCAL (PROVINCIA) ==========
     with tabs[2]:
         st.subheader("Gobierno Local (filtrar por Provincia)")
@@ -1017,7 +870,7 @@ if dash_file:
                             gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
 
                 if not using_total:
-                    delegs = sorted(scope_df["Delegación"].dropna().astype(str).unique().tolist()) if "Delegación" in scope_df.columns else []
+                    delegs = sorted(df_prov_sel["Delegación"].dropna().astype(str).unique().tolist()) if "Delegación" in df_prov_sel.columns else []
                     if delegs:
                         st.markdown(
                             "<div style='margin-top:12px;background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:12px;'>"
@@ -1027,20 +880,6 @@ if dash_file:
                             "</ul></div>",
                             unsafe_allow_html=True
                         )
-
-                # ============= EXTRA: SOLO GOBIERNO LOCAL → TOTAL Y LINEAS ============
-                if 'df_total_y_lineas' in locals() and df_total_y_lineas is not None:
-                    df_tyl_sel = _filter_total_y_lineas_scope(
-                        df_tyl=df_total_y_lineas,
-                        scope_df=scope_df,
-                        prov_col_dash=prov_col,   # <- usamos la columna de provincia detectada
-                        dr_col_dash=dr_col
-                    )
-                    ctx = "Total (todas las provincias)" if using_total else f"Provincia: {sel_prov}"
-                    with st.expander("📄 Ver Categoría y Problemática (TOTAL Y LINEAS)", expanded=False):
-                        _render_categoria_problematica(df_tyl_sel, ctx)
-                else:
-                    st.caption("La hoja 'TOTAL Y LINEAS' no está disponible en el Excel.")
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
 
