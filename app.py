@@ -538,8 +538,8 @@ def _infer_dr_from_delegacion(name: str) -> str:
 def _pick_dr_column(df: pd.DataFrame) -> Optional[str]:
     norm_map = {_norm_str(c): c for c in df.columns}
     candidates = [
-        "direccionregional","direccion regional","dirregional",
-        "dr","region","regional","direccion","direccionreg","regiones","dirección regional"
+        "dirección regional","direccion regional","direccionregional",
+        "dirregional","dr","region","regional","direccion","direccionreg","regiones"
     ]
     for cand in candidates:
         if cand in norm_map:
@@ -552,7 +552,7 @@ def _pick_dr_column(df: pd.DataFrame) -> Optional[str]:
 def _dr_sort_key(s: str):
     if not isinstance(s, str):
         return (999, "")
-    m = re.search(r"r\s*([0-9]+)", s, flags=re.IGNORECASE)
+    m = re.search(r"\b[rR]\s*([0-9]+)", s)
     num = int(m.group(1)) if m else 999
     return (num, s)
 
@@ -566,6 +566,7 @@ def _pick_prov_column(df: pd.DataFrame) -> Optional[str]:
         if "provinc" in k:
             return real
     return None
+
 # --------- helper: total y desglose de Líneas de Acción ---------------
 def _lineas_tot_y_desglose(agg: pd.Series):
     has_gl = "Líneas de Acción Gobierno Local" in agg.index
@@ -627,7 +628,6 @@ def _pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     return None
 
 def _pick_categoria_col(df: pd.DataFrame) -> Optional[str]:
-    # Prioriza exactamente "Categoría" / "Categoria"
     return _pick_col(df, ["categoría","categoria","tipo","clasificacion","clasificación","riesgo","delito","categoria / tipo"])
 
 def _pick_problematica_col(df: pd.DataFrame) -> Optional[str]:
@@ -637,15 +637,35 @@ def _pick_responsable_col(df: pd.DataFrame) -> Optional[str]:
     return _pick_col(df, ["responsable","atiende","institucion","institución","rol","atencion","atención"])
 
 def _norm_responsable(val: str) -> str:
-    v = _norm(val)
-    if v in ["gl","g l","gobierno local","municipalidad","municipio","alcaldia","alcaldía"]:
+    """
+    Normaliza el campo Responsable a: 'gl', 'fp', 'mixta' u 'otro'.
+    Corrige variantes como 'MIXTO', 'Mixto', 'gl/fp', etc.
+    """
+    if val is None:
+        return "otro"
+    v_raw = str(val).strip()
+    v = _norm(v_raw)
+
+    # GL
+    if v in {"gl","g l","gobierno local","municipalidad","municipio","alcaldia","alcaldía"}:
         return "gl"
-    if v in ["fp","f p","fuerza publica","fuerza pública","policia","policía"]:
+    # FP
+    if v in {"fp","f p","fuerza publica","fuerza pública","policia","policía"}:
         return "fp"
-    if v in ["mixta","mixtas","ambas","ambos","gl/fp","fp/gl","gl y fp","fp y gl","ambas instituciones"]:
+    # MIXTO / AMBAS
+    if v in {"mixto","mixta","mixtas","ambas","ambos","gl/fp","fp/gl","gl y fp","fp y gl","ambas instituciones","mix"}:
         return "mixta"
-    # por defecto, si no coincide, lo marcamos como otro
+
+    # fallback por prefijos
+    if v.startswith("mixt"):
+        return "mixta"
+    if v.startswith("gl "):  # ej. "gl (algo)"
+        return "gl"
+    if v.startswith("fp "):
+        return "fp"
+
     return "otro"
+
 def _render_info_box(scope_df: pd.DataFrame, titulo: str, items: List[str], color_borde="#e3e3e3"):
     if not items:
         return
@@ -713,23 +733,29 @@ if dash_file:
 
     df_dash = _ensure_numeric(df_dash.copy())
 
-    # DR inferida
+    # === DR: usar la columna tal cual SIN sobre-normalizar (evita mezclar) ===
     dr_col = _pick_dr_column(df_dash)
     if dr_col:
-        tmp = (
-            df_dash[dr_col].astype(str).apply(_norm_str)
-            .str.replace(r"\s+", " ", regex=True).str.strip()
+        df_dash["DR_inferida"] = (
+            df_dash[dr_col]
+            .astype(str)
+            .str.strip()
+            .replace({"nan": "Sin DR / No identificado", "None": "Sin DR / No identificado"})
+            .fillna("Sin DR / No identificado")
         )
-        tmp = tmp.str.replace(
-            r"(^r\s*\d+)\s*", lambda m: m.group(1).upper().replace(" ", "") + " ", regex=True
-        )
-        tmp = tmp.replace({"": "Sin DR / No identificado", "nan": "Sin DR / No identificado", "none": "Sin DR / No identificado"})
-        df_dash["DR_inferida"] = tmp
     else:
         df_dash["DR_inferida"] = df_dash.get("Delegación", "").apply(_infer_dr_from_delegacion)
 
     # Pestañas (mismo Excel para las 3)
     tabs = st.tabs(["🏢 Por Delegación", "🗺️ Por Dirección Regional", "🏛️ Gobierno Local (por Provincia)"])
+
+    # ---- helper de orden natural para delegaciones: D1-, D2-, ... ----
+    def _deleg_sort_key(s: str):
+        if not isinstance(s, str):
+            return (99999, "")
+        m = re.match(r"\s*d\s*-?\s*(\d+)", s, flags=re.IGNORECASE)
+        num = int(m.group(1)) if m else 99999
+        return (num, s)
 
     # ======================= TAB 1: POR DELEGACIÓN =======================
     with tabs[0]:
@@ -738,7 +764,10 @@ if dash_file:
         if "Delegación" not in df_dash.columns:
             st.info("El Excel no contiene la columna 'Delegación'.")
         else:
-            delegs = sorted(df_dash["Delegación"].dropna().astype(str).unique().tolist())
+            delegs = sorted(
+                df_dash["Delegación"].dropna().astype(str).unique().tolist(),
+                key=_deleg_sort_key
+            )
             sel = st.selectbox("Delegación Policial", delegs, index=0, key="sel_deleg")
 
             dsel = df_dash[df_dash["Delegación"] == sel]
@@ -786,14 +815,15 @@ if dash_file:
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
-            # 🔹 NUEVO: cuadros informativos GL / FP / Mixta con Problemáticas
+            # 🔹 Cuadros informativos GL / FP / Mixta con Problemáticas
             _build_info_panels(scope_df, contexto_txt=titulo_h3)
 
     # =================== TAB 2: POR DIRECCIÓN REGIONAL ===================
     with tabs[1]:
         st.subheader("Avance por Dirección Regional (DR)")
 
-        drs = sorted(df_dash["DR_inferida"].astype(str).unique().tolist(), key=_dr_sort_key)
+        # Usamos la DR tal cual está en el Excel (sin normalización agresiva)
+        drs = sorted(df_dash["DR_inferida"].astype(str).dropna().unique().tolist(), key=_dr_sort_key)
         idx_default = next((i for i,v in enumerate(drs) if v and "sin dr" not in v.lower()), 0)
 
         sel_dr = st.selectbox("Dirección Regional", drs, index=idx_default, key="sel_dr")
@@ -845,7 +875,7 @@ if dash_file:
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
-            # 🔹 NUEVO: cuadros informativos
+            # 🔹 Cuadros informativos
             _build_info_panels(scope_df, contexto_txt=titulo_h3)
 
     # =================== TAB 3: SOLO GOBIERNO LOCAL (PROVINCIA) ==========
@@ -898,11 +928,11 @@ if dash_file:
                 _panel_tres(st.container(), "Gobierno Local",
                             gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
 
-                # 🔹 NUEVO: cuadros informativos enfocándose en GL (pero igualmente muestra FP/Mixta si están en el scope)
+                # Cuadros informativos (GL/FP/Mixta visibles si hay filas en el scope)
                 _build_info_panels(scope_df, contexto_txt=titulo_h3)
 
-                if not using_total:
-                    delegs = sorted(df_prov_sel["Delegación"].dropna().astype(str).unique().tolist()) if "Delegación" in df_prov_sel.columns else []
+                if not using_total and "Delegación" in df_prov_sel.columns:
+                    delegs = sorted(df_prov_sel["Delegación"].dropna().astype(str).unique().tolist(), key=_deleg_sort_key)
                     if delegs:
                         st.markdown(
                             "<div style='margin-top:12px;background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:12px;'>"
@@ -914,3 +944,4 @@ if dash_file:
                         )
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
+
