@@ -6,6 +6,7 @@
 # - GL/FP por conteo de filas; Avance por columnas "Avance" (trimestres)
 # - Filtros anti falsos positivos (años, % como cantidades, etc.)
 # - Descarga del consolidado a Excel
+# - Dashboard con 3 pestañas + cuadros informativos (GL/FP/Mixta)
 # ================================================================
 
 import io, re, unicodedata
@@ -76,136 +77,85 @@ def _pick_best_count(cands: List[int], max_allowed: int = 60) -> Optional[int]:
     if not cands:
         return None
     return max(cands)
+# -*- coding: utf-8 -*-
+# ================================================================
+# Lector de Matrices (Excel) → Resumen consolidado en Excel
+# - Múltiples .xlsx/.xlsm
+# - Detección por rótulos y contenido (layout-independiente)
+# - GL/FP por conteo de filas; Avance por columnas "Avance" (trimestres)
+# - Filtros anti falsos positivos (años, % como cantidades, etc.)
+# - Descarga del consolidado a Excel
+# - Dashboard con 3 pestañas + cuadros informativos (GL/FP/Mixta)
+# ================================================================
 
-# ------------------- Detectores por rótulos ---------------------
-def detect_delegacion(df: pd.DataFrame) -> Optional[str]:
-    rx = re.compile(r"^\s*d\d{1,3}\s*[-–]\s*.+\s*$", re.IGNORECASE)
-    for r in range(min(15, df.shape[0])):
+import io, re, unicodedata
+from typing import Dict, Optional, Tuple, List
+import numpy as np
+import pandas as pd
+import streamlit as st
+import matplotlib.pyplot as plt
+
+# ------------------------ Utilidades ----------------------------
+def _norm(x: str) -> str:
+    if x is None: return ""
+    x = str(x)
+    x = unicodedata.normalize("NFKD", x).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"\s+", " ", x).strip().lower()
+
+def _to_int(x) -> Optional[int]:
+    """Solo acepta enteros de 1–3 dígitos (evita '2025' y descarta celdas con '%')."""
+    if x is None: return None
+    s = str(x).strip()
+    if "%" in s:
+        return None
+    digits = re.sub(r"[^\d-]", "", s)
+    if not re.fullmatch(r"-?\d{1,3}", digits):
+        return None
+    try:
+        return int(digits)
+    except:
+        return None
+
+def _to_pct(x) -> Optional[float]:
+    """Devuelve porcentaje 0..100; si viene 0..1 lo escala; tolera '0', '0%'."""
+    if x is None: return None
+    s = str(x).replace(",", ".")
+    m = re.search(r"-?\d+(\.\d+)?", s)
+    if not m: return None
+    v = float(m.group())
+    if "%" in s or v > 1.0:
+        return max(0.0, min(100.0, v))
+    return max(0.0, min(100.0, v * 100.0))
+
+def _read_df(file) -> pd.DataFrame:
+    return pd.read_excel(file, engine="openpyxl", header=None, dtype=str)
+
+def _find(df: pd.DataFrame, pattern: str) -> List[Tuple[int,int]]:
+    rx = re.compile(pattern)
+    out = []
+    for r in range(df.shape[0]):
         for c in range(df.shape[1]):
-            raw = df.iat[r,c]
-            if raw and rx.match(str(raw)):
-                return str(raw).strip()
-    hits = _find(df, r"\bdelegaci[oó]n\b")
-    for (r,c) in hits:
-        if c+1 < df.shape[1]:
-            v = df.iat[r, c+1]
-            if v: return str(v).strip()
-    return None
+            val = df.iat[r,c]
+            if val is None:
+                continue
+            if rx.search(_norm(val)):
+                out.append((r,c))
+    return out
 
-def detect_lineas_accion(df: pd.DataFrame, debug: bool=False) -> Optional[int]:
-    hits = _find(df, r"\blineas?\s*de\s*accion\b")
-    for (r,c) in hits:
-        cands = []
-        for (i,j) in _neighbors(df, r, c, up=0, down=6, left=2, right=4):
-            cands.append(_to_int(df.iat[i,j]))
-        val = _pick_best_count(cands, max_allowed=60)
-        if debug and val is not None:
-            st.caption(f"Líneas de Acción detectadas: {val}")
-        if val is not None:
-            return val
-    la_hits = _find(df, r"\blinea\s+de\s+accion\s*#")
-    if la_hits:
-        return len(la_hits)
-    return None
+def _neighbors(df: pd.DataFrame, r: int, c: int, up: int, down: int, left: int, right: int):
+    r0 = max(0, r - up)
+    r1 = min(df.shape[0]-1, r + down)
+    c0 = max(0, c - left)
+    c1 = min(df.shape[1]-1, c + right)
+    for i in range(r0, r1+1):
+        for j in range(c0, c1+1):
+            yield i, j
 
-# -------- Detección robusta de GL/FP y Avance por “lo visible” -----
-def detect_indicator_rows(df: pd.DataFrame) -> List[int]:
-    rows = []
-    for r in range(df.shape[0]):
-        left_vals = [df.iat[r, c] for c in range(min(6, df.shape[1]))]
-        left_norm = [_norm(v) for v in left_vals]
-        if any(v == "gl" for v in left_norm) or any(v == "fp" for v in left_norm):
-            rows.append(r)
-    return rows
-
-def detect_role_of_row(df: pd.DataFrame, r: int) -> Optional[str]:
-    """Devuelve 'gl', 'fp' o None según el contenido a la izquierda."""
-    left_vals = [df.iat[r, c] for c in range(min(6, df.shape[1]))]
-    left_norm = [_norm(v) for v in left_vals]
-    if any(v == "gl" for v in left_norm):
-        return "gl"
-    if any(v == "fp" for v in left_norm):
-        return "fp"
-    return None
-
-def detect_avance_columns(df: pd.DataFrame) -> List[int]:
-    cols = []
-    for r in range(df.shape[0]):
-        row = [df.iat[r, c] for c in range(df.shape[1])]
-        for c, v in enumerate(row):
-            if "avance" in _norm(v):
-                cols.append(c)
-        if len(cols) >= 2:
-            return sorted(list(set(cols)))
-        else:
-            cols = []
-    # Fallback razonable si no se detectan rótulos "Avance"
-    fallback = [10, 15, 20, 25]
-    return [c for c in fallback if c < df.shape[1]]
-
-def gl_fp_counts(df: pd.DataFrame) -> Tuple[int, int]:
-    rows = detect_indicator_rows(df)
-    gl = fp = 0
-    for r in rows:
-        role = detect_role_of_row(df, r)
-        if role == "gl":
-            gl += 1
-        elif role == "fp":
-            fp += 1
-    return gl, fp
-
-def _row_status_from_avance(df: pd.DataFrame, r: int, avance_cols: List[int]) -> str:
-    vals = [df.iat[r, c] for c in avance_cols]
-    valsn = [_norm(v) for v in vals]
-    if any("complet" in v for v in valsn):
-        return "completos"
-    if any("con actividades" in v for v in valsn):
-        return "con_actividades"
-    if any("sin actividades" in v for v in valsn):
-        return "sin_actividades"
-    return "sin_actividades"
-
-def avance_counts(df: pd.DataFrame) -> Tuple[Dict[str,int], int]:
-    """Conteo global (todas las filas de indicadores)."""
-    rows = detect_indicator_rows(df)
-    avance_cols = detect_avance_columns(df)
-    counts = {"completos": 0, "con_actividades": 0, "sin_actividades": 0}
-    for r in rows:
-        counts[_row_status_from_avance(df, r, avance_cols)] += 1
-    return counts, len(rows)
-
-def avance_counts_by_role(df: pd.DataFrame) -> Tuple[Dict[str,int], int, Dict[str,int], int]:
-    """Desglose por rol → (GL_counts, n_gl, FP_counts, n_fp)."""
-    rows = detect_indicator_rows(df)
-    avance_cols = detect_avance_columns(df)
-
-    gl_counts = {"completos": 0, "con_actividades": 0, "sin_actividades": 0}
-    fp_counts = {"completos": 0, "con_actividades": 0, "sin_actividades": 0}
-    n_gl = n_fp = 0
-
-    for r in rows:
-        role = detect_role_of_row(df, r)
-        stt = _row_status_from_avance(df, r, avance_cols)
-        if role == "gl":
-            gl_counts[stt] += 1
-            n_gl += 1
-        elif role == "fp":
-            fp_counts[stt] += 1
-            n_fp += 1
-
-    return gl_counts, n_gl, fp_counts, n_fp
-
-def detect_total_indicadores(df: pd.DataFrame) -> Optional[int]:
-    hits = _find(df, r"\btotal\s+de\s+indicadores\b")
-    for (r,c) in hits:
-        cands = []
-        for (i,j) in _neighbors(df, r, c, up=0, down=3, left=0, right=6):
-            cands.append(_to_int(df.iat[i,j]))
-        val = _pick_best_count([x for x in cands if x is not None], max_allowed=120)
-        if val is not None:
-            return val
-    return None
-
+def _pick_best_count(cands: List[int], max_allowed: int = 60) -> Optional[int]:
+    cands = [x for x in cands if x is not None and 0 <= x <= max_allowed]
+    if not cands:
+        return None
+    return max(cands)
 # --------------------- Proceso de un archivo --------------------
 def process_file(upload, debug: bool=False) -> Dict:
     df = _read_df(upload)
@@ -405,7 +355,6 @@ if uploads:
             st.write(f"- {name}: {err}")
 else:
     st.info("Sube tus matrices para ver el resumen.")
-
 # ======================================================================
 # =====================  PESTAÑA: 📊 Dashboard de Avance  ===============
 # ======================================================================
@@ -458,18 +407,16 @@ COLOR_ROJO   = "#ED1C24"
 COLOR_AMARIL = "#F4C542"
 COLOR_VERDE  = "#7AC943"
 COLOR_AZUL_H = "#1F4E79"
-
 # === Gráfico con fondo BLANCO ===
 def _bar_avance(pcts_tuple, title=""):
     labels = ["Sin actividades", "Con actividades", "Cumplida"]
     values = list(pcts_tuple)
-    # Colores fijados: Rojo, Amarillo, Verde
     colors = [COLOR_ROJO, COLOR_AMARIL, COLOR_VERDE]
 
     fig, ax = plt.subplots(figsize=(5.5, 3.5))
     fig.patch.set_facecolor("#ffffff")
     ax.set_facecolor("#ffffff")
-    ax.bar(labels, values, color=colors)  # <— colores restaurados
+    ax.bar(labels, values, color=colors)
     ax.set_ylim(0, 100)
     ax.set_ylabel("%", color="#111")
     ax.set_title(title, color="#111")
@@ -547,7 +494,6 @@ def _resumen_avance(col, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind):
             <div style="font-size:60px;font-weight:900;line-height:1;">{int(total_ind)}</div></div>""",
             unsafe_allow_html=True
         )
-
 def _ensure_numeric(df):
     cols_n = [
         "GL Completos (n)","GL Con actividades (n)","GL Sin actividades (n)",
@@ -593,7 +539,7 @@ def _pick_dr_column(df: pd.DataFrame) -> Optional[str]:
     norm_map = {_norm_str(c): c for c in df.columns}
     candidates = [
         "direccionregional","direccion regional","dirregional",
-        "dr","region","regional","direccion","direccionreg","regiones"
+        "dr","region","regional","direccion","direccionreg","regiones","dirección regional"
     ]
     for cand in candidates:
         if cand in norm_map:
@@ -620,7 +566,6 @@ def _pick_prov_column(df: pd.DataFrame) -> Optional[str]:
         if "provinc" in k:
             return real
     return None
-
 # --------- helper: total y desglose de Líneas de Acción ---------------
 def _lineas_tot_y_desglose(agg: pd.Series):
     has_gl = "Líneas de Acción Gobierno Local" in agg.index
@@ -655,32 +600,110 @@ def _render_lineas_block(agg: pd.Series):
               <div style="font-size:13px;color:#666;margin-bottom:4px;">Mixtas</div>
               <div style="font-size:32px;font-weight:800;color:#111;">{mx}</div>
             </div>""", unsafe_allow_html=True)
-
 # --------- helper: toggle que suma TODAS las opciones del filtro -------
 def _scope_total_o_seleccion(df_selected: pd.DataFrame, df_all_options: pd.DataFrame, key: str, etiqueta_plural: str):
     """
     Si el toggle está ON, devuelve df_all_options (todas las opciones del filtro).
     Si está OFF, devuelve df_selected (solo la selección actual).
-    Además muestra una pastilla con 'Total de datos del filtro'.
+    (Se retiró la burbuja visual; solo un caption informativo cuando aplica.)
     """
     use_total = st.toggle("Habilitar mostrar total de datos", value=False, key=key)
     scope = df_all_options if use_total else df_selected
-    # Pastilla minimalista
-    st.markdown(
-        f"""
-        <div style="margin:8px 0 0 0; text-align:center;">
-          <span style="display:inline-block;padding:8px 14px;border-radius:999px;border:1px solid #e3e3e3;background:#ffffff;color:#111;">
-            <span style="font-size:13px;color:#666;margin-right:8px;">Total de datos del filtro</span>
-            <span style="font-size:24px;font-weight:900;line-height:1;">{len(scope)}</span>
-          </span>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
     if use_total:
         st.caption(f"Mostrando la **totalidad** de {etiqueta_plural}.")
     return scope, use_total
 
+# --------- pick columnas nuevas: Categoría / Problemática / Responsable ----
+def _pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    norm_map = {_norm_str(c): c for c in df.columns}
+    for cand in candidates:
+        if cand in norm_map:
+            return norm_map[cand]
+    # Contiene términos
+    for k, real in norm_map.items():
+        for c in candidates:
+            if c in k:
+                return real
+    return None
+
+def _pick_categoria_col(df: pd.DataFrame) -> Optional[str]:
+    # Prioriza exactamente "Categoría" / "Categoria"
+    return _pick_col(df, ["categoría","categoria","tipo","clasificacion","clasificación","riesgo","delito","categoria / tipo"])
+
+def _pick_problematica_col(df: pd.DataFrame) -> Optional[str]:
+    return _pick_col(df, ["problemática","problematica","descriptor","riesgo","delito","item","ítem","problema"])
+
+def _pick_responsable_col(df: pd.DataFrame) -> Optional[str]:
+    return _pick_col(df, ["responsable","atiende","institucion","institución","rol","atencion","atención"])
+
+def _norm_responsable(val: str) -> str:
+    v = _norm(val)
+    if v in ["gl","g l","gobierno local","municipalidad","municipio","alcaldia","alcaldía"]:
+        return "gl"
+    if v in ["fp","f p","fuerza publica","fuerza pública","policia","policía"]:
+        return "fp"
+    if v in ["mixta","mixtas","ambas","ambos","gl/fp","fp/gl","gl y fp","fp y gl","ambas instituciones"]:
+        return "mixta"
+    # por defecto, si no coincide, lo marcamos como otro
+    return "otro"
+def _render_info_box(scope_df: pd.DataFrame, titulo: str, items: List[str], color_borde="#e3e3e3"):
+    if not items:
+        return
+    st.markdown(
+        f"""
+        <div style="margin-top:10px;background:#ffffff;border:2px solid {color_borde};
+                    border-radius:10px;padding:12px;">
+            <div style="font-weight:800;color:#111;margin-bottom:8px;">{titulo}</div>
+            <ul style="margin:0 0 0 20px;color:#111;">
+                {''.join([f"<li>{x}</li>" for x in items])}
+            </ul>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+def _build_info_panels(scope_df: pd.DataFrame, contexto_txt: str):
+    """
+    Lee columnas: Categoría, Problemática, Responsable y arma:
+    - Municipalidad (GL) atiende N {categoría} y son: [...]
+    - Fuerza Pública (FP) atiende N {categoría} y son: [...]
+    - Ambas instituciones (Mixtas) atienden N {categoría} y son: [...]
+    Separamos por categoría (Riesgo Social / Delito) si existen.
+    """
+    cat_col = _pick_categoria_col(scope_df)
+    prob_col = _pick_problematica_col(scope_df)
+    resp_col = _pick_responsable_col(scope_df)
+
+    if not prob_col or not resp_col:
+        return  # no hay datos para construir paneles
+
+    # Normalizamos responsable
+    tmp = scope_df.copy()
+    tmp["_resp_norm"] = tmp[resp_col].astype(str).apply(_norm_responsable)
+    tmp["_cat_norm"] = tmp[cat_col].astype(str) if cat_col else "General"
+
+    # Por cada categoría presente
+    for cat_val in sorted(tmp["_cat_norm"].dropna().astype(str).unique().tolist()):
+        sub = tmp[tmp["_cat_norm"] == cat_val] if cat_col else tmp
+        # GL
+        gl_items = sorted(sub[sub["_resp_norm"] == "gl"][prob_col].dropna().astype(str).unique().tolist())
+        fp_items = sorted(sub[sub["_resp_norm"] == "fp"][prob_col].dropna().astype(str).unique().tolist())
+        mx_items = sorted(sub[sub["_resp_norm"] == "mixta"][prob_col].dropna().astype(str).unique().tolist())
+
+        # Títulos
+        cat_txt = cat_val if cat_col else "temas"
+        if gl_items:
+            _render_info_box(
+                sub, f"Municipalidad atiende {len(gl_items)} {cat_txt} y son los siguientes:", gl_items, color_borde="#9BC3A3"
+            )
+        if fp_items:
+            _render_info_box(
+                sub, f"Fuerza Pública atiende {len(fp_items)} {cat_txt} y son los siguientes:", fp_items, color_borde="#9BBBD9"
+            )
+        if mx_items:
+            _render_info_box(
+                sub, f"Ambas instituciones atienden {len(mx_items)} {cat_txt} y son los siguientes:", mx_items, color_borde="#E3C17A"
+            )
 # ============================= MAIN DASHBOARD =============================
 if dash_file:
     try:
@@ -720,7 +743,7 @@ if dash_file:
 
             dsel = df_dash[df_dash["Delegación"] == sel]
 
-            # 🔸 Toggle: usar total de TODAS las delegaciones o solo la seleccionada
+            # Toggle: total de TODAS las delegaciones o solo la seleccionada
             scope_df, using_total = _scope_total_o_seleccion(
                 df_selected=dsel,
                 df_all_options=df_dash,
@@ -762,6 +785,9 @@ if dash_file:
 
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
+
+            # 🔹 NUEVO: cuadros informativos GL / FP / Mixta con Problemáticas
+            _build_info_panels(scope_df, contexto_txt=titulo_h3)
 
     # =================== TAB 2: POR DIRECCIÓN REGIONAL ===================
     with tabs[1]:
@@ -819,6 +845,9 @@ if dash_file:
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
+            # 🔹 NUEVO: cuadros informativos
+            _build_info_panels(scope_df, contexto_txt=titulo_h3)
+
     # =================== TAB 3: SOLO GOBIERNO LOCAL (PROVINCIA) ==========
     with tabs[2]:
         st.subheader("Gobierno Local (filtrar por Provincia)")
@@ -869,6 +898,9 @@ if dash_file:
                 _panel_tres(st.container(), "Gobierno Local",
                             gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
 
+                # 🔹 NUEVO: cuadros informativos enfocándose en GL (pero igualmente muestra FP/Mixta si están en el scope)
+                _build_info_panels(scope_df, contexto_txt=titulo_h3)
+
                 if not using_total:
                     delegs = sorted(df_prov_sel["Delegación"].dropna().astype(str).unique().tolist()) if "Delegación" in df_prov_sel.columns else []
                     if delegs:
@@ -882,5 +914,3 @@ if dash_file:
                         )
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
-
-
