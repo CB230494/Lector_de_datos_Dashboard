@@ -6,8 +6,7 @@
 # - GL/FP por conteo de filas; Avance por columnas "Avance" (trimestres)
 # - Filtros anti falsos positivos (años, % como cantidades, etc.)
 # - Descarga del consolidado a Excel
-# - (NUEVO) Resumen tipo "segunda imagen" ordenado por categorías
-#   con chips “quién atiende” (GL / FP / Mixta)
+# - Dashboard + Resumen por categorías (solo atendidos, sin tablas ni "(GL:..)")
 # ================================================================
 
 import io, re, unicodedata
@@ -16,7 +15,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
-from collections import Counter
+
+# ======= Configuración de visualización (cambio mínimo) =======
+SHOW_EXTRA_FILTERS = False  # Si True, vuelve a mostrarse el panel de filtros extra
 
 # ------------------------ Utilidades ----------------------------
 def _norm(x: str) -> str:
@@ -297,37 +298,13 @@ def process_file(upload, debug: bool=False) -> Dict:
 
     if debug:
         st.caption(
-            f"[DEBUG] Avance cols: {detect_avance_columns(df)} | rows GL/FP: {gl}+{fp}={gl+fp} | "
-            f"n_gl={n_gl} n_fp={n_fp}"
+            f"[DEBUG] Avance cols: {detect_avance_columns(df)} | rows GL/FP: {gl}+{fp}={gl+fp} "
         )
     return out
 
 # --------------------------- UI --------------------------------
 st.set_page_config(page_title="Lector de Matrices → Resumen Excel", layout="wide")
 st.title("📊 Lector de Matrices (Excel) → Resumen consolidado")
-
-# ===== CSS para chips del “segundo resumen” =====
-BADGE_CSS = """
-<style>
-.badges { display:flex; gap:.5rem; flex-wrap:wrap; }
-.badge {
-  display:inline-block; padding:.15rem .5rem; border-radius:999px;
-  font-size:.85rem; font-weight:600; line-height:1; border:1px solid transparent;
-}
-.badge.gl { background:#E7F5EE; color:#0F5132; border-color:#B7E4C7; }      /* Gobierno Local */
-.badge.fp { background:#E8F0FE; color:#08306B; border-color:#B6CCFE; }      /* Fuerza Pública */
-.badge.mx { background:#FFF4E6; color:#7C2D12; border-color:#FED7AA; }      /* Mixta */
-.tbl { width:100%; border-collapse:separate; border-spacing:0 8px; }
-.tbl td { padding:10px 12px; vertical-align:middle; }
-.row {
-  background:#12121208; border:1px solid #00000010; border-radius:10px;
-}
-.prob { font-weight:600; color:#111; }
-.cat-h { font-size:1.05rem; font-weight:800; margin:18px 0 8px; color:#111; }
-.smallmuted { color:#777; font-size:.9rem; }
-</style>
-"""
-st.markdown(BADGE_CSS, unsafe_allow_html=True)
 
 with st.sidebar:
     st.header("Opciones")
@@ -441,7 +418,7 @@ with st.expander("ℹ️ Instrucciones", expanded=True):
     st.markdown("""
     1) **Carga** aquí el **Excel consolidado** (hoja `resumen`).  
     2) Pestañas: **Por Delegación**, **Por Dirección Regional**, y **Gobierno Local (por Provincia)**.  
-    3) En todas se muestra **Líneas de Acción total** y, si el archivo trae, el **desglose**: Gobierno Local / Fuerza Pública / Mixtas.  
+    3) Al final de cada pestaña se muestra el **Resumen por categorías** en formato claro (solo atendidos).
     """)
 
 dash_file = st.file_uploader("Cargar Excel consolidado (resumen_matrices.xlsx)", type=["xlsx"], key="dash_excel")
@@ -641,41 +618,6 @@ def _pick_prov_column(df: pd.DataFrame) -> Optional[str]:
             return real
     return None
 
-# --------- helper: total y desglose de Líneas de Acción ---------------
-def _lineas_tot_y_desglose(agg: pd.Series):
-    has_gl = "Líneas de Acción Gobierno Local" in agg.index
-    has_fp = "Líneas de Acción Fuerza Pública" in agg.index
-    has_mx = "Líneas de Acción Mixtas" in agg.index
-    if has_gl or has_fp or has_mx:
-        gl = int(agg.get("Líneas de Acción Gobierno Local", 0) or 0)
-        fp = int(agg.get("Líneas de Acción Fuerza Pública", 0) or 0)
-        mx = int(agg.get("Líneas de Acción Mixtas", 0) or 0)
-        total = gl + fp + mx
-        return total, gl, fp, mx, True
-    total = int(agg.get("Líneas de Acción", 0) or 0)
-    return total, None, None, None, False
-
-def _render_lineas_block(agg: pd.Series):
-    total, gl, fp, mx, has_breakdown = _lineas_tot_y_desglose(agg)
-    _big_number(total, "Líneas de Acción", big_px=72)
-    if has_breakdown:
-        c1, c2, c3 = st.columns(3)
-        c1.markdown(f"""
-            <div style="background:#ffffff;border:1px solid #e3e3e3;border-radius:8px;padding:10px;text-align:center;">
-              <div style="font-size:13px;color:#666;margin-bottom:4px;">Gobierno Local</div>
-              <div style="font-size:32px;font-weight:800;color:#111;">{gl}</div>
-            </div>""", unsafe_allow_html=True)
-        c2.markdown(f"""
-            <div style="background:#ffffff;border:1px solid #e3e3e3;border-radius:8px;padding:10px;text-align:center;">
-              <div style="font-size:13px;color:#666;margin-bottom:4px;">Fuerza Pública</div>
-              <div style="font-size:32px;font-weight:800;color:#111;">{fp}</div>
-            </div>""", unsafe_allow_html=True)
-        c3.markdown(f"""
-            <div style="background:#ffffff;border:1px solid #e3e3e3;border-radius:8px;padding:10px;text-align:center;">
-              <div style="font-size:13px;color:#666;margin-bottom:4px;">Mixtas</div>
-              <div style="font-size:32px;font-weight:800;color:#111;">{mx}</div>
-            </div>""", unsafe_allow_html=True)
-
 # --------- toggle: suma TODAS las opciones del filtro ---------------
 def _scope_total_o_seleccion(df_selected: pd.DataFrame, df_all_options: pd.DataFrame, key: str, etiqueta_plural: str):
     use_total = st.toggle("Habilitar mostrar total de datos", value=False, key=key)
@@ -695,7 +637,7 @@ def _scope_total_o_seleccion(df_selected: pd.DataFrame, df_all_options: pd.DataF
         st.caption(f"Mostrando la **totalidad** de {etiqueta_plural}.")
     return scope, use_total
 
-# =================== NUEVO: filtros + “segundo resumen” ===================
+# =================== NUEVO: filtros + resumen textual conciso ===================
 def _pick_named_column(df: pd.DataFrame, names_like: List[str]) -> Optional[str]:
     if df is None or df.empty: return None
     norm_map = {_norm_str(c): c for c in df.columns}
@@ -756,108 +698,94 @@ def _sum_lineas(df_any: pd.DataFrame) -> Tuple[int, int, int, int]:
     # último recurso: contar filas
     return len(df_any), 0, 0, 0
 
-def _badges_for_roles(gl_f: bool, fp_f: bool, mx_f: bool) -> str:
-    roles = []
-    if gl_f: roles.append(("gl", "Gobierno Local"))
-    if fp_f: roles.append(("fp", "Fuerza Pública"))
-    if mx_f: roles.append(("mx", "Mixta"))
-    if not roles:
-        return '<span class="smallmuted">—</span>'
-    html = ['<div class="badges">']
-    for cls, label in roles:
-        html.append(f'<span class="badge {cls}">{label}</span>')
-    html.append("</div>")
-    return "".join(html)
+# ========== (NUEVO) Auto-detección de columnas + resumen limpio ==========
+def _autodetect_found_cols(df_any: pd.DataFrame) -> Dict[str, str]:
+    return {
+        k:v for k,v in {
+            "Categorias": _pick_named_column(df_any, ["categorias", "categoria", "categoría", "categorías"]),
+            "Problematica": _pick_named_column(df_any, ["problematica", "problemática", "problema", "problemas"]),
+        }.items() if v is not None
+    }
 
-def _render_segundo_resumen(df_filt: pd.DataFrame, found_cols: Dict[str, str]):
-    """Salida clara/bonita tipo 'segunda imagen': 
-       - total líneas (con desglose si existe)
-       - Bloques por categoría → filas Problema | Atiende (chips)
-       - Sin 'primer resumen' ni globos extra
+def _render_segundo_resumen_limpio(df_filt: pd.DataFrame, found_cols: Dict[str, str]):
+    """
+    SOLO atendidos. Sin tablas HTML. Sin '(GL:x, FP:y, Mixtas:z)'.
+    Formato:
+      **Se atienden N líneas de acción.**
+      <Categoría>
+      • Problema — atendido por: Gobierno Local, Fuerza Pública, Mixta
     """
     st.markdown("---")
-    st.markdown("### 🧾 Resumen de categorías (formato claro)")
+    st.markdown("### 🧾 Resumen por categorías (solo atendidos)")
 
     if df_filt is None or df_filt.empty:
-        st.info("No hay registros que coincidan con los filtros seleccionados.")
+        st.info("No hay registros para los datos seleccionados.")
         return
 
     col_categorias = found_cols.get("Categorias")
     col_problema   = found_cols.get("Problematica")
-
-    # 1) Total líneas + desglose (GL/FP/Mixta)
-    tot, gl, fp, mx = _sum_lineas(df_filt)
-    desg = ""
-    if any([gl, fp, mx]):
-        desg = f" (GL: {int(gl)}, FP: {int(fp)}, Mixtas: {int(mx)})"
-    st.markdown(f"**Se atienden {int(tot)} líneas de acción**{desg}.")
-
-    if not col_categorias and not col_problema:
-        st.caption("No hay columnas 'Categorias' y 'Problematica' para detallar riesgos/delitos.")
+    if not col_categorias or not col_problema:
+        st.caption("No se encontraron columnas de **Categorías** y **Problemática** para resumir.")
         return
 
-    # Construir mapa: categoría normalizada -> { problema -> roles flags }
-    cat_map: Dict[str, Dict[str, Tuple[bool,bool,bool]]] = {}
-    cat_label_map: Dict[str, str] = {}
+    # Total (sin desglose)
+    total_lineas, _, _, _ = _sum_lineas(df_filt)
+    st.markdown(f"**Se atienden {int(total_lineas)} líneas de acción.**")
 
+    # Mapear categoría → lista de bullets SOLO si hay algún rol
+    cat_map: Dict[str, List[str]] = {}
     for _, row in df_filt.iterrows():
         gl_f, fp_f, mx_f = _role_flags(row)
+        if not (gl_f or fp_f or mx_f):
+            continue
+        roles = []
+        if gl_f: roles.append("Gobierno Local")
+        if fp_f: roles.append("Fuerza Pública")
+        if mx_f: roles.append("Mixta")
 
-        cats = _extract_tokens(row[col_categorias]) if col_categorias else []
-        probs = _extract_tokens(row[col_problema]) if col_problema else []
+        cats = _extract_tokens(row[col_categorias])
+        probs = _extract_tokens(row[col_problema])
 
         for cat in cats:
-            cat_key = _norm_str(cat)
-            cat_label_map[cat_key] = cat  # conservar label original
-            inner = cat_map.get(cat_key, {})
-            for p in probs if probs else ["(Sin problemática)"]:
-                # merge OR de flags
-                prev = inner.get(p, (False, False, False))
-                inner[p] = (prev[0] or gl_f, prev[1] or fp_f, prev[2] or mx_f)
-            cat_map[cat_key] = inner
+            for prob in probs:
+                cat_map.setdefault(cat, []).append(f"• {prob} — atendido por: {', '.join(roles)}")
 
-    # Orden sugerida: Riesgos sociales, Delitos, luego alfabético
-    def _cat_sort_key(k: str):
-        base = _norm_str(k)
-        if "riesgo" in base: return (0, k)
-        if "delito" in base: return (1, k)
-        return (2, k)
+    # Orden sugerida: Riesgos, Delitos, resto alfa
+    def _cat_key(s: str):
+        n = _norm_str(s)
+        if "riesgo" in n: return (0, s.lower())
+        if "delito" in n: return (1, s.lower())
+        return (2, s.lower())
 
-    for cat_key in sorted(cat_map.keys(), key=_cat_sort_key):
-        cat_label = cat_label_map.get(cat_key, cat_key.title())
-        items = cat_map[cat_key]
+    printed = False
+    for cat in sorted(cat_map.keys(), key=_cat_key):
+        items = cat_map[cat]
+        if not items:
+            continue
+        printed = True
+        st.markdown(f"**{cat}**")
+        st.markdown("\n".join(items))
 
-        st.markdown(f'<div class="cat-h">{cat_label} <span class="smallmuted">({len(items)} problemáticas)</span></div>', unsafe_allow_html=True)
+    if not printed:
+        st.caption("No hay problemáticas atendidas en las categorías disponibles.")
 
-        # Construir filas ordenadas por: con atención primero, luego alfabético
-        rows_html = []
-        tmp = []
-        for problema, flags in items.items():
-            gl_f, fp_f, mx_f = flags
-            has_any = gl_f or fp_f or mx_f
-            tmp.append( (0 if has_any else 1, problema.lower(), problema, gl_f, fp_f, mx_f) )
-        tmp.sort()
-
-        for _, _, problema, gl_f, fp_f, mx_f in tmp:
-            rows_html.append(
-                f'''
-                <tr class="row">
-                    <td class="prob" style="width:55%">{problema}</td>
-                    <td style="width:45%">{_badges_for_roles(gl_f, fp_f, mx_f)}</td>
-                </tr>
-                '''
-            )
-        table_html = f'''
-        <table class="tbl">
-            <tbody>
-                {''.join(rows_html)}
-            </tbody>
-        </table>
-        '''
-        st.markdown(table_html, unsafe_allow_html=True)
-
-# ============================= MAIN DASHBOARD =============================
+# ========== (TOCADO MÍNIMO) _extra_filters_ui: se auto-oculta por bandera ==========
 def _extra_filters_ui(scope_df: pd.DataFrame, key_prefix: str = "") -> Tuple[pd.DataFrame, Dict[str, str]]:
+    """
+    Si SHOW_EXTRA_FILTERS=False -> no dibuja el panel y devuelve (df, cols_detectadas).
+    Si True -> se comporta como antes (multiselects).
+    """
+    if not SHOW_EXTRA_FILTERS:
+        found_cols = {
+            k: v for k, v in {
+                "Categorias": _pick_named_column(scope_df, ["categorias", "categoria", "categoría", "categorías"]),
+                "Problematica": _pick_named_column(scope_df, ["problematica", "problemática", "problema", "problemas"]),
+                "Responsable": _pick_named_column(scope_df, ["responsable", "responsables"]),
+            }.items() if v is not None
+        }
+        return scope_df, found_cols
+
+    # --- Comportamiento original (por si deseas volver a mostrarlo) ---
     if scope_df is None or scope_df.empty:
         return scope_df, {}
 
@@ -899,6 +827,7 @@ def _extra_filters_ui(scope_df: pd.DataFrame, key_prefix: str = "") -> Tuple[pd.
 
     return df_f, found
 
+# ============================= MAIN DASHBOARD =============================
 if dash_file:
     try:
         df_dash = pd.read_excel(dash_file, sheet_name="resumen")
@@ -961,7 +890,7 @@ if dash_file:
             titulo_h3 = "Total (todas las delegaciones)" if using_total else sel
             st.markdown(f"<h3 style='text-align:center;margin-top:0;color:#111;'>{titulo_h3}</h3>", unsafe_allow_html=True)
 
-            _render_lineas_block(agg)
+            _big_number(int(agg.get("Líneas de Acción", agg.get("Líneas de Acción Gobierno Local", 0) + agg.get("Líneas de Acción Fuerza Pública", 0) + agg.get("Líneas de Acción Mixtas", 0))), "Líneas de Acción", big_px=72)
             _bar_avance((sin_p, con_p, comp_p), title="Total de indicadores (Gobierno Local + Fuerza Pública)")
 
             top_gl, top_fp = st.columns(2)
@@ -978,9 +907,11 @@ if dash_file:
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
-            # ===== Filtros + “segundo resumen” (lo pedido)
+            # ======= (AQUÍ) Resumen por categorías limpio =======
             df_catprob, found_cols = _extra_filters_ui(scope_df, key_prefix="deleg_")
-            _render_segundo_resumen(df_catprob, found_cols)
+            if not found_cols:
+                found_cols = _autodetect_found_cols(df_catprob)
+            _render_segundo_resumen_limpio(df_catprob, found_cols)
 
     # =================== TAB 2: POR DIRECCIÓN REGIONAL ===================
     with tabs[1]:
@@ -1021,7 +952,7 @@ if dash_file:
             titulo_h3 = "Total (todas las DR)" if using_total else sel_dr
             st.markdown(f"<h3 style='text-align:center;margin-top:0;color:#111;'>{titulo_h3}</h3>", unsafe_allow_html=True)
 
-            _render_lineas_block(agg)
+            _big_number(int(agg.get("Líneas de Acción", agg.get("Líneas de Acción Gobierno Local", 0) + agg.get("Líneas de Acción Fuerza Pública", 0) + agg.get("Líneas de Acción Mixtas", 0))), "Líneas de Acción", big_px=72)
             _bar_avance((sin_p, con_p, comp_p), title="Total de indicadores (Gobierno Local + Fuerza Pública)")
 
             top_gl, top_fp = st.columns(2)
@@ -1038,9 +969,11 @@ if dash_file:
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
-            # ===== Filtros + “segundo resumen” (lo pedido)
+            # ======= Resumen por categorías limpio =======
             df_catprob, found_cols = _extra_filters_ui(scope_df, key_prefix="dr_")
-            _render_segundo_resumen(df_catprob, found_cols)
+            if not found_cols:
+                found_cols = _autodetect_found_cols(df_catprob)
+            _render_segundo_resumen_limpio(df_catprob, found_cols)
 
     # =================== TAB 3: SOLO GOBIERNO LOCAL (PROVINCIA) ==========
     with tabs[2]:
@@ -1067,8 +1000,6 @@ if dash_file:
             else:
                 agg = scope_df.select_dtypes(include=[np.number]).sum(numeric_only=True)
 
-                _render_lineas_block(agg)
-
                 def _pct(n, d):
                     return (n / d * 100.0) if d > 0 else 0.0
 
@@ -1087,25 +1018,19 @@ if dash_file:
                     unsafe_allow_html=True
                 )
 
+                _big_number(int(agg.get("Líneas de Acción", agg.get("Líneas de Acción Gobierno Local", 0) + agg.get("Líneas de Acción Fuerza Pública", 0) + agg.get("Líneas de Acción Mixtas", 0))), "Líneas de Acción", big_px=72)
                 _bar_avance((gl_sin_p, gl_con_p, gl_comp_p), title="Total de indicadores (Gobierno Local)")
 
                 _panel_tres(st.container(), "Gobierno Local",
                             gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
 
-                if not using_total:
-                    delegs = sorted(scope_df["Delegación"].dropna().astype(str).unique().tolist()) if "Delegación" in scope_df.columns else []
-                    if delegs:
-                        st.markdown(
-                            "<div style='margin-top:12px;background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:12px;'>"
-                            f"<div style='font-weight:700;margin-bottom:8px;color:#111;'>Delegaciones en {sel_prov}</div>"
-                            + "<ul style='margin:0 0 0 18px;color:#111;'>" +
-                            "".join([f"<li>{d}</li>" for d in delegs]) +
-                            "</ul></div>",
-                            unsafe_allow_html=True
-                        )
-
-                # ===== Filtros + “segundo resumen” (lo pedido)
+                # ======= Resumen por categorías limpio =======
                 df_catprob, found_cols = _extra_filters_ui(scope_df, key_prefix="prov_")
-                _render_segundo_resumen(df_catprob, found_cols)
+                if not found_cols:
+                    found_cols = _autodetect_found_cols(df_catprob)
+                _render_segundo_resumen_limpio(df_catprob, found_cols)
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
+
+
+
