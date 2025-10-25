@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
+from collections import Counter
 
 # ------------------------ Utilidades ----------------------------
 def _norm(x: str) -> str:
@@ -463,13 +464,11 @@ COLOR_AZUL_H = "#1F4E79"
 def _bar_avance(pcts_tuple, title=""):
     labels = ["Sin actividades", "Con actividades", "Cumplida"]
     values = list(pcts_tuple)
-    # Colores fijados: Rojo, Amarillo, Verde
     colors = [COLOR_ROJO, COLOR_AMARIL, COLOR_VERDE]
-
     fig, ax = plt.subplots(figsize=(5.5, 3.5))
     fig.patch.set_facecolor("#ffffff")
     ax.set_facecolor("#ffffff")
-    ax.bar(labels, values, color=colors)  # <— colores restaurados
+    ax.bar(labels, values, color=colors)
     ax.set_ylim(0, 100)
     ax.set_ylabel("%", color="#111")
     ax.set_title(title, color="#111")
@@ -656,16 +655,10 @@ def _render_lineas_block(agg: pd.Series):
               <div style="font-size:32px;font-weight:800;color:#111;">{mx}</div>
             </div>""", unsafe_allow_html=True)
 
-# --------- helper: toggle que suma TODAS las opciones del filtro -------
+# --------- toggle: suma TODAS las opciones del filtro ---------------
 def _scope_total_o_seleccion(df_selected: pd.DataFrame, df_all_options: pd.DataFrame, key: str, etiqueta_plural: str):
-    """
-    Si el toggle está ON, devuelve df_all_options (todas las opciones del filtro).
-    Si está OFF, devuelve df_selected (solo la selección actual).
-    Además muestra una pastilla con 'Total de datos del filtro'.
-    """
     use_total = st.toggle("Habilitar mostrar total de datos", value=False, key=key)
     scope = df_all_options if use_total else df_selected
-    # Pastilla minimalista
     st.markdown(
         f"""
         <div style="margin:8px 0 0 0; text-align:center;">
@@ -680,6 +673,220 @@ def _scope_total_o_seleccion(df_selected: pd.DataFrame, df_all_options: pd.DataF
     if use_total:
         st.caption(f"Mostrando la **totalidad** de {etiqueta_plural}.")
     return scope, use_total
+
+# ==================== NUEVO: Filtros + resumen por Categorías/Problemática/Responsable ====================
+# Detección robusta de columnas nuevas (acepta variaciones)
+def _pick_named_column(df: pd.DataFrame, names_like: List[str]) -> Optional[str]:
+    if df is None or df.empty: return None
+    norm_map = {_norm_str(c): c for c in df.columns}
+    for alias in names_like:
+        a = _norm_str(alias)
+        if a in norm_map:
+            return norm_map[a]
+    # aproximar por contiene
+    for k, real in norm_map.items():
+        if any(_norm_str(x) in k for x in names_like):
+            return real
+    return None
+
+def _extract_tokens(cell) -> List[str]:
+    """Separa por , ; / | salto de línea. Limpia espacios y normaliza."""
+    if pd.isna(cell):
+        return []
+    s = str(cell)
+    parts = re.split(r"[,\;/\|\n]+", s)
+    out = []
+    for p in parts:
+        p2 = re.sub(r"\s+", " ", p).strip()
+        if p2:
+            out.append(p2)
+    return out
+
+def _role_flags(row: pd.Series) -> Tuple[bool, bool, bool]:
+    """
+    Determina si una fila participa en GL, FP o Mixtas:
+    - Prioriza columnas 'Líneas de Acción Gobierno Local / Fuerza Pública / Mixtas' > 0
+    - Si no existen, usa 'Indicadores Gobierno Local / Fuerza Pública' > 0 y define Mixtas si ambos > 0
+    """
+    gl = fp = mx = False
+    la_gl = row.get("Líneas de Acción Gobierno Local", np.nan)
+    la_fp = row.get("Líneas de Acción Fuerza Pública", np.nan)
+    la_mx = row.get("Líneas de Acción Mixtas", np.nan)
+    ind_gl = row.get("Indicadores Gobierno Local", np.nan)
+    ind_fp = row.get("Indicadores Fuerza Pública", np.nan)
+
+    has_la = not (pd.isna(la_gl) and pd.isna(la_fp) and pd.isna(la_mx))
+    if has_la:
+        gl = _to_num_safe(la_gl) > 0 if not pd.isna(la_gl) else False
+        fp = _to_num_safe(la_fp) > 0 if not pd.isna(la_fp) else False
+        mx = _to_num_safe(la_mx) > 0 if not pd.isna(la_mx) else False
+        # si no hay mixtas explícitas pero hay ambos con >0, marcamos mixtas también
+        if not mx and (gl and fp):
+            mx = True
+    else:
+        gl = _to_num_safe(ind_gl) > 0 if not pd.isna(ind_gl) else False
+        fp = _to_num_safe(ind_fp) > 0 if not pd.isna(ind_fp) else False
+        mx = gl and fp
+    return gl, fp, mx
+
+def _extra_filters_ui(scope_df: pd.DataFrame, key_prefix: str = "") -> Tuple[pd.DataFrame, Dict[str, str]]:
+    """
+    Muestra multiselects para Categorias, Problematica, Responsable si existen.
+    Devuelve el DF filtrado y un diccionario con los nombres reales de columnas detectadas.
+    """
+    if scope_df is None or scope_df.empty:
+        return scope_df, {}
+
+    col_categorias = _pick_named_column(scope_df, ["categorias", "categoria", "categoría", "categorías"])
+    col_problema   = _pick_named_column(scope_df, ["problematica", "problemática", "problema", "problemas"])
+    col_resp       = _pick_named_column(scope_df, ["responsable", "responsables"])
+
+    found = {k:v for k,v in {
+        "Categorias": col_categorias,
+        "Problematica": col_problema,
+        "Responsable": col_resp
+    }.items() if v is not None}
+
+    st.markdown("### 🔎 Filtro adicional (Categorías / Problemática / Responsable)")
+    if not found:
+        st.caption("No se encontraron columnas **Categorias**, **Problematica** o **Responsable** en el Excel. (Se muestran solo los paneles superiores).")
+        return scope_df, {}
+
+    c1, c2, c3 = st.columns(3)
+    df_f = scope_df.copy()
+
+    # Categorias
+    if col_categorias:
+        opts = sorted(pd.unique(df_f[col_categorias].dropna().astype(str)))
+        sel = c1.multiselect("Categorias", options=opts, default=opts, key=f"{key_prefix}cat")
+        if sel and len(sel) < len(opts):
+            df_f = df_f[df_f[col_categorias].astype(str).isin(sel)]
+
+    # Problematica
+    if col_problema:
+        opts2 = sorted(pd.unique(df_f[col_problema].dropna().astype(str)))
+        sel2 = c2.multiselect("Problemática", options=opts2, default=opts2, key=f"{key_prefix}prob")
+        if sel2 and len(sel2) < len(opts2):
+            df_f = df_f[df_f[col_problema].astype(str).isin(sel2)]
+
+    # Responsable
+    if col_resp:
+        opts3 = sorted(pd.unique(df_f[col_resp].dropna().astype(str)))
+        sel3 = c3.multiselect("Responsable", options=opts3, default=opts3, key=f"{key_prefix}resp")
+        if sel3 and len(sel3) < len(opts3):
+            df_f = df_f[df_f[col_resp].astype(str).isin(sel3)]
+
+    return df_f, found
+
+def _render_informativo(df_filt: pd.DataFrame, found_cols: Dict[str, str], key_prefix: str = ""):
+    """
+    Muestra:
+    - Conteo de Categorías por rol (GL/FP/Mixtas)
+    - Conteo de Problemáticas por rol
+    - Resumen cuando Categoria es 'delito' o 'riesgo social' (case-insensitive)
+    """
+    st.markdown("---")
+    st.markdown("### 🧾 Resumen informativo (nuevo)")
+
+    if df_filt is None or df_filt.empty:
+        st.info("No hay registros que coincidan con los filtros seleccionados.")
+        return
+
+    col_categorias = found_cols.get("Categorias")
+    col_problema   = found_cols.get("Problematica")
+
+    if not col_categorias and not col_problema:
+        st.caption("No hay columnas de Categorías o Problemática para resumir.")
+        return
+
+    # Construir contadores por rol
+    cats_gl = Counter(); cats_fp = Counter(); cats_mx = Counter()
+    probs_gl = Counter(); probs_fp = Counter(); probs_mx = Counter()
+
+    delito_gl = Counter(); delito_fp = Counter(); delito_mx = Counter()
+    riesgo_gl = Counter(); riesgo_fp = Counter(); riesgo_mx = Counter()
+
+    for _, row in df_filt.iterrows():
+        gl, fp, mx = _role_flags(row)
+
+        cats = _extract_tokens(row[col_categorias]) if col_categorias else []
+        probs = _extract_tokens(row[col_problema]) if col_problema else []
+
+        # Normalizaciones para clasificar "delito" y "riesgo social"
+        cats_norm = [ _norm_str(c) for c in cats ]
+
+        # Contadores por rol
+        if gl:
+            for c in cats:  cats_gl[c] += 1
+            for p in probs: probs_gl[p] += 1
+        if fp:
+            for c in cats:  cats_fp[c] += 1
+            for p in probs: probs_fp[p] += 1
+        if mx:
+            for c in cats:  cats_mx[c] += 1
+            for p in probs: probs_mx[p] += 1
+
+        # Marcadores especiales por categoria
+        if col_categorias:
+            if any(k in cats_norm for k in ["delito", "delitos"]):
+                if gl: 
+                    for p in probs: delito_gl[p] += 1
+                if fp: 
+                    for p in probs: delito_fp[p] += 1
+                if mx: 
+                    for p in probs: delito_mx[p] += 1
+            if any(k in cats_norm for k in ["riesgo social", "riesgos sociales", "riesgo", "riesgos"]):
+                if gl: 
+                    for p in probs: riesgo_gl[p] += 1
+                if fp: 
+                    for p in probs: riesgo_fp[p] += 1
+                if mx: 
+                    for p in probs: riesgo_mx[p] += 1
+
+    def _render_counter(title, cnt: Counter):
+        items = cnt.most_common()
+        if not items:
+            st.caption(f"• Sin datos para **{title}**.")
+            return
+        lis = "".join([f"<li><b>{k}</b>: {v}</li>" for k,v in items])
+        st.markdown(f"""
+        <div style="background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:10px;">
+          <div style="font-weight:700;margin-bottom:6px;color:#111;">{title}</div>
+          <ul style="margin:0 0 0 18px;color:#111;">{lis}</ul>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Bloques: Categorías por rol
+    st.markdown("#### Categorías atendidas por rol")
+    c1, c2, c3 = st.columns(3)
+    with c1: _render_counter("Gobierno Local", cats_gl)
+    with c2: _render_counter("Fuerza Pública", cats_fp)
+    with c3: _render_counter("Mixtas", cats_mx)
+
+    # Bloques: Problemáticas por rol
+    st.markdown("#### Problemáticas atendidas por rol")
+    p1, p2, p3 = st.columns(3)
+    with p1: _render_counter("Gobierno Local", probs_gl)
+    with p2: _render_counter("Fuerza Pública", probs_fp)
+    with p3: _render_counter("Mixtas", probs_mx)
+
+    # Resumen especial: cuando Categoría es Delito o Riesgo Social
+    st.markdown("#### Cuando la **Categoría** es “Delito” o “Riesgo Social”")
+    st.caption("Se listan las **problemáticas** asociadas y sus conteos por rol.")
+
+    # Delito
+    st.markdown("**Delito**")
+    d1, d2, d3 = st.columns(3)
+    with d1: _render_counter("Gobierno Local", delito_gl)
+    with d2: _render_counter("Fuerza Pública", delito_fp)
+    with d3: _render_counter("Mixtas", delito_mx)
+
+    # Riesgo social
+    st.markdown("**Riesgo Social**")
+    r1, r2, r3 = st.columns(3)
+    with r1: _render_counter("Gobierno Local", riesgo_gl)
+    with r2: _render_counter("Fuerza Pública", riesgo_fp)
+    with r3: _render_counter("Mixtas", riesgo_mx)
 
 # ============================= MAIN DASHBOARD =============================
 if dash_file:
@@ -720,7 +927,7 @@ if dash_file:
 
             dsel = df_dash[df_dash["Delegación"] == sel]
 
-            # 🔸 Toggle: usar total de TODAS las delegaciones o solo la seleccionada
+            # 🔸 Toggle total
             scope_df, using_total = _scope_total_o_seleccion(
                 df_selected=dsel,
                 df_all_options=df_dash,
@@ -762,6 +969,10 @@ if dash_file:
 
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
+
+            # ======= NUEVO: Filtros y resumen por Categorías/Problemática/Responsable =======
+            df_catprob, found_cols = _extra_filters_ui(scope_df, key_prefix="deleg_")
+            _render_informativo(df_catprob, found_cols, key_prefix="deleg_")
 
     # =================== TAB 2: POR DIRECCIÓN REGIONAL ===================
     with tabs[1]:
@@ -819,6 +1030,10 @@ if dash_file:
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
+            # ======= NUEVO: Filtros y resumen por Categorías/Problemática/Responsable =======
+            df_catprob, found_cols = _extra_filters_ui(scope_df, key_prefix="dr_")
+            _render_informativo(df_catprob, found_cols, key_prefix="dr_")
+
     # =================== TAB 3: SOLO GOBIERNO LOCAL (PROVINCIA) ==========
     with tabs[2]:
         st.subheader("Gobierno Local (filtrar por Provincia)")
@@ -846,13 +1061,13 @@ if dash_file:
 
                 _render_lineas_block(agg)
 
+                def _pct(n, d):
+                    return (n / d * 100.0) if d > 0 else 0.0
+
                 gl_tot = agg.get("Indicadores Gobierno Local", 0)
                 gl_sin_n  = agg.get("GL Sin actividades (n)", 0)
                 gl_con_n  = agg.get("GL Con actividades (n)", 0)
                 gl_comp_n = agg.get("GL Completos (n)", 0)
-
-                def _pct(n, d):
-                    return (n / d * 100.0) if d > 0 else 0.0
 
                 gl_sin_p = _pct(gl_sin_n, gl_tot)
                 gl_con_p = _pct(gl_con_n, gl_tot)
@@ -870,7 +1085,7 @@ if dash_file:
                             gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
 
                 if not using_total:
-                    delegs = sorted(df_prov_sel["Delegación"].dropna().astype(str).unique().tolist()) if "Delegación" in df_prov_sel.columns else []
+                    delegs = sorted(scope_df["Delegación"].dropna().astype(str).unique().tolist()) if "Delegación" in scope_df.columns else []
                     if delegs:
                         st.markdown(
                             "<div style='margin-top:12px;background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:12px;'>"
@@ -880,6 +1095,9 @@ if dash_file:
                             "</ul></div>",
                             unsafe_allow_html=True
                         )
+
+                # ======= NUEVO: Filtros y resumen por Categorías/Problemática/Responsable =======
+                df_catprob, found_cols = _extra_filters_ui(scope_df, key_prefix="prov_")
+                _render_informativo(df_catprob, found_cols, key_prefix="prov_")
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
-
