@@ -167,7 +167,6 @@ def _row_status_from_avance(df: pd.DataFrame, r: int, avance_cols: List[int]) ->
     return "sin_actividades"
 
 def avance_counts(df: pd.DataFrame) -> Tuple[Dict[str,int], int]:
-    """Conteo global (todas las filas de indicadores)."""
     rows = detect_indicator_rows(df)
     avance_cols = detect_avance_columns(df)
     counts = {"completos": 0, "con_actividades": 0, "sin_actividades": 0}
@@ -176,7 +175,6 @@ def avance_counts(df: pd.DataFrame) -> Tuple[Dict[str,int], int]:
     return counts, len(rows)
 
 def avance_counts_by_role(df: pd.DataFrame) -> Tuple[Dict[str,int], int, Dict[str,int], int]:
-    """Desglose por rol → (GL_counts, n_gl, FP_counts, n_fp)."""
     rows = detect_indicator_rows(df)
     avance_cols = detect_avance_columns(df)
 
@@ -419,7 +417,6 @@ with st.expander("ℹ️ Instrucciones", expanded=True):
     1) **Carga** aquí el **Excel consolidado** (hoja `resumen`).  
     2) Pestañas: **Por Delegación**, **Por Dirección Regional**, y **Gobierno Local (por Provincia)**.  
     3) En todas se muestra **Líneas de Acción total** y, si el archivo trae, el **desglose**: Gobierno Local / Fuerza Pública / Mixtas.  
-    4) La primera sección de la app (consolidado desde múltiples matrices) sigue igual; este dashboard usa ese mismo **único Excel**.
     """)
 
 dash_file = st.file_uploader("Cargar Excel consolidado (resumen_matrices.xlsx)", type=["xlsx"], key="dash_excel")
@@ -460,7 +457,6 @@ COLOR_AMARIL = "#F4C542"
 COLOR_VERDE  = "#7AC943"
 COLOR_AZUL_H = "#1F4E79"
 
-# === Gráfico con fondo BLANCO ===
 def _bar_avance(pcts_tuple, title=""):
     labels = ["Sin actividades", "Con actividades", "Cumplida"]
     values = list(pcts_tuple)
@@ -674,7 +670,7 @@ def _scope_total_o_seleccion(df_selected: pd.DataFrame, df_all_options: pd.DataF
         st.caption(f"Mostrando la **totalidad** de {etiqueta_plural}.")
     return scope, use_total
 
-# ==================== NUEVO: Filtros + resumen por Categorías/Problemática/Responsable ====================
+# =================== NUEVO: filtros + resumen textual conciso ===================
 def _pick_named_column(df: pd.DataFrame, names_like: List[str]) -> Optional[str]:
     if df is None or df.empty: return None
     norm_map = {_norm_str(c): c for c in df.columns}
@@ -719,9 +715,8 @@ def _role_flags(row: pd.Series) -> Tuple[bool, bool, bool]:
         mx = gl and fp
     return gl, fp, mx
 
-# --- NUEVO: sumar líneas de acción (total y por rol) sobre un DF filtrado ---
 def _sum_lineas(df_any: pd.DataFrame) -> Tuple[int, int, int, int]:
-    """Devuelve (total, gl, fp, mx) sumando columnas de líneas de acción si existen; si no, infiere."""
+    """(total, gl, fp, mx) por columnas de líneas si existen; si no, infiere por filas."""
     if df_any is None or df_any.empty:
         return 0, 0, 0, 0
     num = df_any.select_dtypes(include=[np.number])
@@ -732,8 +727,8 @@ def _sum_lineas(df_any: pd.DataFrame) -> Tuple[int, int, int, int]:
         return gl + fp + mx, gl, fp, mx
     if "Líneas de Acción" in num.columns:
         tot = int(num["Líneas de Acción"].sum())
-        return tot, None or 0, None or 0, None or 0
-    # último recurso: contar filas (no ideal, pero evita romper)
+        return tot, 0, 0, 0
+    # último recurso: contar filas
     return len(df_any), 0, 0, 0
 
 def _extra_filters_ui(scope_df: pd.DataFrame, key_prefix: str = "") -> Tuple[pd.DataFrame, Dict[str, str]]:
@@ -752,7 +747,7 @@ def _extra_filters_ui(scope_df: pd.DataFrame, key_prefix: str = "") -> Tuple[pd.
 
     st.markdown("### 🔎 Filtro adicional (Categorías / Problemática / Responsable)")
     if not found:
-        st.caption("No se encontraron columnas **Categorias**, **Problematica** o **Responsable** en el Excel. (Se muestran solo los paneles superiores).")
+        st.caption("No se encontraron **Categorias**, **Problematica** o **Responsable** en el Excel.")
         return scope_df, {}
 
     c1, c2, c3 = st.columns(3)
@@ -778,9 +773,14 @@ def _extra_filters_ui(scope_df: pd.DataFrame, key_prefix: str = "") -> Tuple[pd.
 
     return df_f, found
 
-def _render_informativo(df_filt: pd.DataFrame, found_cols: Dict[str, str], key_prefix: str = ""):
+def _render_texto_conciso(df_filt: pd.DataFrame, found_cols: Dict[str, str]):
+    """Salida corta tipo:
+       - Se atienden X líneas de acción (GL:a, FP:b, Mixtas:c)
+       - Hay N riesgos sociales: • riesgo — atendido por ...
+       - Hay M delitos: • delito — atendido por ...
+    """
     st.markdown("---")
-    st.markdown("### 🧾 Resumen informativo (nuevo)")
+    st.markdown("### 🧾 Resumen")
 
     if df_filt is None or df_filt.empty:
         st.info("No hay registros que coincidan con los filtros seleccionados.")
@@ -789,163 +789,69 @@ def _render_informativo(df_filt: pd.DataFrame, found_cols: Dict[str, str], key_p
     col_categorias = found_cols.get("Categorias")
     col_problema   = found_cols.get("Problematica")
 
+    # 1) Se atienden X líneas...
+    tot, gl, fp, mx = _sum_lineas(df_filt)
+    desg = ""
+    if any([gl, fp, mx]):
+        desg = f" (GL: {int(gl)}, FP: {int(fp)}, Mixtas: {int(mx)})"
+    st.markdown(f"**Se atienden {int(tot)} líneas de acción**{desg}.")
+
     if not col_categorias and not col_problema:
-        st.caption("No hay columnas de Categorías o Problemática para resumir.")
+        st.caption("No hay columnas 'Categorias' y 'Problematica' para detallar riesgos/delitos.")
         return
 
-    # Contadores por rol
-    cats_gl = Counter(); cats_fp = Counter(); cats_mx = Counter()
-    probs_gl = Counter(); probs_fp = Counter(); probs_mx = Counter()
-
-    delito_gl = Counter(); delito_fp = Counter(); delito_mx = Counter()
-    riesgo_gl = Counter(); riesgo_fp = Counter(); riesgo_mx = Counter()
-
-    # Para listado “riesgos sociales y quién los atiende”
-    # mapeo problemática -> set(roles)
-    riesgo_roles = {}
+    # Recolectar riesgos y delitos con roles
+    riesgos_map = {}   # problema -> set(roles)
+    delitos_map = {}
 
     for _, row in df_filt.iterrows():
-        gl, fp, mx = _role_flags(row)
+        gl_f, fp_f, mx_f = _role_flags(row)
+        roles = []
+        if gl_f: roles.append("Gobierno Local")
+        if fp_f: roles.append("Fuerza Pública")
+        if mx_f: roles.append("Mixta")
+
         cats = _extract_tokens(row[col_categorias]) if col_categorias else []
         probs = _extract_tokens(row[col_problema]) if col_problema else []
         cats_norm = [_norm_str(c) for c in cats]
 
-        if gl:
-            for c in cats:  cats_gl[c] += 1
-            for p in probs: probs_gl[p] += 1
-        if fp:
-            for c in cats:  cats_fp[c] += 1
-            for p in probs: probs_fp[p] += 1
-        if mx:
-            for c in cats:  cats_mx[c] += 1
-            for p in probs: probs_mx[p] += 1
-
-        # Marcadores especiales por categoria
-        is_delito = any(k in cats_norm for k in ["delito","delitos"])
         is_riesgo = any(k in cats_norm for k in ["riesgo social","riesgos sociales","riesgo","riesgos"])
-
-        if is_delito:
-            if gl: 
-                for p in probs: delito_gl[p] += 1
-            if fp: 
-                for p in probs: delito_fp[p] += 1
-            if mx: 
-                for p in probs: delito_mx[p] += 1
+        is_delito = any(k in cats_norm for k in ["delito","delitos"])
 
         if is_riesgo:
-            if gl: 
-                for p in probs: riesgo_gl[p] += 1
-            if fp: 
-                for p in probs: riesgo_fp[p] += 1
-            if mx: 
-                for p in probs: riesgo_mx[p] += 1
-            # Registrar roles para el listado por problemática
             for p in probs:
-                roles = riesgo_roles.get(p, set())
-                if gl: roles.add("Gobierno Local")
-                if fp: roles.add("Fuerza Pública")
-                if mx: roles.add("Mixta")
-                riesgo_roles[p] = roles
+                s = riesgos_map.get(p, set())
+                s.update(roles)
+                riesgos_map[p] = s
+        if is_delito:
+            for p in probs:
+                s = delitos_map.get(p, set())
+                s.update(roles)
+                delitos_map[p] = s
 
-    def _render_counter(title, cnt: Counter):
-        items = cnt.most_common()
-        if not items:
-            st.caption(f"• Sin datos para **{title}**.")
-            return
-        lis = "".join([f"<li><b>{k}</b>: {v}</li>" for k,v in items])
-        st.markdown(f"""
-        <div style="background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:10px;">
-          <div style="font-weight:700;margin-bottom:6px;color:#111;">{title}</div>
-          <ul style="margin:0 0 0 18px;color:#111;">{lis}</ul>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # Bloques: Categorías por rol
-    st.markdown("#### Categorías atendidas por rol")
-    c1, c2, c3 = st.columns(3)
-    with c1: _render_counter("Gobierno Local", cats_gl)
-    with c2: _render_counter("Fuerza Pública", cats_fp)
-    with c3: _render_counter("Mixta", cats_mx)
-
-    # Bloques: Problemáticas por rol
-    st.markdown("#### Problemáticas atendidas por rol")
-    p1, p2, p3 = st.columns(3)
-    with p1: _render_counter("Gobierno Local", probs_gl)
-    with p2: _render_counter("Fuerza Pública", probs_fp)
-    with p3: _render_counter("Mixta", probs_mx)
-
-    # ===================== NUEVO RESUMEN TEXTUAL QUE PEDISTE =====================
-    # 1) "Se atienden X líneas de acción"
-    total_lineas, gl_lineas, fp_lineas, mx_lineas = _sum_lineas(df_filt)
-    st.markdown("#### 🧮 Resumen de líneas de acción")
-    st.markdown(
-        f"<div style='background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:12px;color:#111;'>"
-        f"<div><b>Se atienden {int(total_lineas)} líneas de acción</b></div>"
-        + (
-            f"<div style='margin-top:6px;'>Desglose: "
-            f"Gobierno Local: <b>{int(gl_lineas)}</b> &nbsp;•&nbsp; "
-            f"Fuerza Pública: <b>{int(fp_lineas)}</b> &nbsp;•&nbsp; "
-            f"Mixtas: <b>{int(mx_lineas)}</b></div>"
-            if (gl_lineas or fp_lineas or mx_lineas) else ""
-        )
-        + "</div>",
-        unsafe_allow_html=True
-    )
-
-    # 2) "De esas, Y corresponden a Riesgos sociales (GL:a, FP:b, Mixtas:c)"
-    #    Sumamos líneas solo en filas cuya Categoría sea riesgo social
-    if col_categorias:
-        mask_riesgo = df_filt[col_categorias].astype(str).str.lower().str.contains(
-            r"(riesgo social|riesgos sociales|riesgo\b|riesgos\b)", regex=True, na=False
-        )
-        df_riesgo = df_filt[mask_riesgo].copy()
-        r_tot, r_gl, r_fp, r_mx = _sum_lineas(df_riesgo)
-        st.markdown(
-            f"<div style='background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:12px;margin-top:8px;color:#111;'>"
-            f"De esas, <b>{int(r_tot)}</b> corresponden a <b>Riesgos sociales</b>"
-            + (
-                f" (GL: <b>{int(r_gl)}</b>, FP: <b>{int(r_fp)}</b>, Mixtas: <b>{int(r_mx)}</b>)"
-                if (r_gl or r_fp or r_mx) else ""
-            )
-            + "</div>",
-            unsafe_allow_html=True
-        )
+    # 2) Riesgos sociales
+    n_riesgos = len(riesgos_map)
+    st.markdown(f"**Hay {n_riesgos} riesgos sociales:**")
+    if n_riesgos == 0:
+        st.caption("Sin riesgos sociales en el alcance seleccionado.")
     else:
-        df_riesgo = pd.DataFrame()
-
-    # 3) “Riesgos sociales y quién los atiende” (lista)
-    st.markdown("#### 📋 Riesgos sociales y quién los atiende")
-    if not riesgo_roles:
-        st.caption("No se identificaron problemáticas bajo la categoría **Riesgo social** en el alcance seleccionado.")
-    else:
-        items = sorted(riesgo_roles.items(), key=lambda x: x[0].lower())
         lis = []
-        for problema, roles in items:
-            roles_txt = ", ".join(sorted(roles))
-            lis.append(f"<li><b>{problema}</b> — {roles_txt}</li>")
-        st.markdown(
-            "<div style='background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:12px;'>"
-            "<ul style='margin:0 0 0 18px;color:#111;'>"
-            + "".join(lis) +
-            "</ul></div>",
-            unsafe_allow_html=True
-        )
+        for problema, roles in sorted(riesgos_map.items(), key=lambda x: x[0].lower()):
+            quien = ", ".join(sorted(roles)) if roles else "—"
+            lis.append(f"<li>{problema} — <i>{quien}</i></li>")
+        st.markdown("<ul style='margin-top:0'>" + "".join(lis) + "</ul>", unsafe_allow_html=True)
 
-    # ----------------- Secciones especiales (ya las tenías) -----------------
-    st.markdown("#### Cuando la **Categoría** es “Delito” o “Riesgo Social”")
-    st.caption("Se listan las **problemáticas** asociadas y sus conteos por rol.")
-
-    st.markdown("**Delito**")
-    d1, d2, d3 = st.columns(3)
-    with d1: _render_counter("Gobierno Local", delito_gl)
-    with d2: _render_counter("Fuerza Pública", delito_fp)
-    with d3: _render_counter("Mixta", delito_mx)
-
-    st.markdown("**Riesgo Social**")
-    r1, r2, r3 = st.columns(3)
-    with r1: _render_counter("Gobierno Local", riesgo_gl)
-    with r2: _render_counter("Fuerza Pública", riesgo_fp)
-    with r3: _render_counter("Mixta", riesgo_mx)
+    # 3) Delitos
+    n_delitos = len(delitos_map)
+    st.markdown(f"**Hay {n_delitos} delitos:**")
+    if n_delitos == 0:
+        st.caption("Sin delitos en el alcance seleccionado.")
+    else:
+        lis = []
+        for problema, roles in sorted(delitos_map.items(), key=lambda x: x[0].lower()):
+            quien = ", ".join(sorted(roles)) if roles else "—"
+            lis.append(f"<li>{problema} — <i>{quien}</i></li>")
+        st.markdown("<ul style='margin-top:0'>" + "".join(lis) + "</ul>", unsafe_allow_html=True)
 
 # ============================= MAIN DASHBOARD =============================
 if dash_file:
@@ -1027,9 +933,9 @@ if dash_file:
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
-            # === NUEVO: filtros y resumen extendido ===
+            # ===== Filtros + salida concisa
             df_catprob, found_cols = _extra_filters_ui(scope_df, key_prefix="deleg_")
-            _render_informativo(df_catprob, found_cols, key_prefix="deleg_")
+            _render_texto_conciso(df_catprob, found_cols)
 
     # =================== TAB 2: POR DIRECCIÓN REGIONAL ===================
     with tabs[1]:
@@ -1087,9 +993,9 @@ if dash_file:
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
-            # === NUEVO: filtros y resumen extendido ===
+            # ===== Filtros + salida concisa
             df_catprob, found_cols = _extra_filters_ui(scope_df, key_prefix="dr_")
-            _render_informativo(df_catprob, found_cols, key_prefix="dr_")
+            _render_texto_conciso(df_catprob, found_cols)
 
     # =================== TAB 3: SOLO GOBIERNO LOCAL (PROVINCIA) ==========
     with tabs[2]:
@@ -1153,8 +1059,8 @@ if dash_file:
                             unsafe_allow_html=True
                         )
 
-                # === NUEVO: filtros y resumen extendido ===
+                # ===== Filtros + salida concisa
                 df_catprob, found_cols = _extra_filters_ui(scope_df, key_prefix="prov_")
-                _render_informativo(df_catprob, found_cols, key_prefix="prov_")
+                _render_texto_conciso(df_catprob, found_cols)
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
