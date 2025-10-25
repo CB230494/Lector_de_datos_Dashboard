@@ -686,8 +686,17 @@ def _pluralizar(cat_txt: str, cantidad: int) -> str:
     """
     Devuelve el texto ajustado al singular/plural según cantidad.
     Ejemplo: (1, 'Delito') → '1 Delito'; (2, 'Delito') → '2 Delitos'
+    Casos especiales: 'Riesgo Social' → 'Riesgos Sociales'
     """
     base = cat_txt.strip()
+
+    # casos especiales conocidos
+    if cantidad > 1:
+        if base.lower() == "riesgo social":
+            return f"{cantidad} Riesgos Sociales"
+        if base.lower() == "delito":
+            return f"{cantidad} Delitos"
+
     if cantidad == 1:
         return f"{cantidad} {base}"
     else:
@@ -969,5 +978,6 @@ if dash_file:
                         )
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
+
 
 
