@@ -1221,3 +1221,102 @@ def _render_segundo_resumen_limpio(df_filt: pd.DataFrame, found_cols: Dict[str, 
 
     if not printed_any:
         st.caption("No hay problemáticas atendidas en las categorías disponibles.")
+# ==========================================================
+# PARTE 10/10 — INTEGRACIÓN DEL RESUMEN LIMPIO EN PESTAÑAS
+# ==========================================================
+# - Define _extra_filters_ui con bandera SHOW_EXTRA_FILTERS
+# - Inserta el “Resumen por categorías (solo atendidos)”
+#   al final de cada pestaña del dashboard.
+
+def _extra_filters_ui(scope_df: pd.DataFrame, key_prefix: str = "") -> Tuple[pd.DataFrame, Dict[str, str]]:
+    """
+    Si SHOW_EXTRA_FILTERS=False:
+        - NO dibuja paneles/multiselects.
+        - Devuelve (scope_df tal cual, columnas detectadas automáticamente).
+    Si SHOW_EXTRA_FILTERS=True:
+        - Muestra multiselect de Categorías / Problemática / Responsable y filtra.
+    """
+    # --- Auto (sin UI) ---
+    if not SHOW_EXTRA_FILTERS:
+        found_cols = {
+            k: v for k, v in {
+                "Categorias": _pick_named_column(scope_df, ["categorias", "categoria", "categoría", "categorías"]),
+                "Problematica": _pick_named_column(scope_df, ["problematica", "problemática", "problema", "problemas"]),
+                "Responsable": _pick_named_column(scope_df, ["responsable", "responsables"]),
+            }.items() if v is not None
+        }
+        return scope_df, found_cols
+
+    # --- Con UI (opcional) ---
+    if scope_df is None or scope_df.empty:
+        return scope_df, {}
+
+    col_categorias = _pick_named_column(scope_df, ["categorias", "categoria", "categoría", "categorías"])
+    col_problema   = _pick_named_column(scope_df, ["problematica", "problemática", "problema", "problemas"])
+    col_resp       = _pick_named_column(scope_df, ["responsable", "responsables"])
+
+    found = {k: v for k, v in {
+        "Categorias": col_categorias,
+        "Problematica": col_problema,
+        "Responsable": col_resp
+    }.items() if v is not None}
+
+    st.markdown("### 🔎 Filtro adicional (Categorías / Problemática / Responsable)")
+    if not found:
+        st.caption("No se encontraron **Categorias**, **Problematica** o **Responsable** en el Excel.")
+        return scope_df, {}
+
+    c1, c2, c3 = st.columns(3)
+    df_f = scope_df.copy()
+
+    if col_categorias:
+        opts = sorted(pd.unique(df_f[col_categorias].dropna().astype(str)))
+        sel = c1.multiselect("Categorias", options=opts, default=opts, key=f"{key_prefix}cat")
+        if sel and len(sel) < len(opts):
+            df_f = df_f[df_f[col_categorias].astype(str).isin(sel)]
+
+    if col_problema:
+        opts2 = sorted(pd.unique(df_f[col_problema].dropna().astype(str)))
+        sel2 = c2.multiselect("Problemática", options=opts2, default=opts2, key=f"{key_prefix}prob")
+        if sel2 and len(sel2) < len(opts2):
+            df_f = df_f[df_f[col_problema].astype(str).isin(sel2)]
+
+    if col_resp:
+        opts3 = sorted(pd.unique(df_f[col_resp].dropna().astype(str)))
+        sel3 = c3.multiselect("Responsable", options=opts3, default=opts3, key=f"{key_prefix}resp")
+        if sel3 and len(sel3) < len(opts3):
+            df_f = df_f[df_f[col_resp].astype(str).isin(sel3)]
+
+    return df_f, found
+
+
+# ==========================
+# ⛳️ BLOQUES DE INSERCIÓN
+# ==========================
+# Copia/pega **cada bloque** al final de SU pestaña, justo DESPUÉS
+# del último _resumen_avance(...) ya existente en la Parte 7.
+
+# --- BLOQUE A — Pestaña "🏢 Por Delegación" ---
+# (Pegar dentro del `with tabs[0]:` después de _resumen_avance(...))
+def _integrate_resumen_deleg(scope_df: pd.DataFrame):
+    df_catprob, found_cols = _extra_filters_ui(scope_df, key_prefix="deleg_")
+    if not found_cols:
+        found_cols = _autodetect_found_cols(df_catprob)
+    _render_segundo_resumen_limpio(df_catprob, found_cols)
+
+# --- BLOQUE B — Pestaña "🗺️ Por Dirección Regional" ---
+# (Pegar dentro del `with tabs[1]:` después de _resumen_avance(...))
+def _integrate_resumen_dr(scope_df: pd.DataFrame):
+    df_catprob, found_cols = _extra_filters_ui(scope_df, key_prefix="dr_")
+    if not found_cols:
+        found_cols = _autodetect_found_cols(df_catprob)
+    _render_segundo_resumen_limpio(df_catprob, found_cols)
+
+# --- BLOQUE C — Pestaña "🏛️ Gobierno Local (por Provincia)" ---
+# (Pegar dentro del `with tabs[2]:` al final del bloque, después de paneles)
+def _integrate_resumen_prov(scope_df: pd.DataFrame):
+    df_catprob, found_cols = _extra_filters_ui(scope_df, key_prefix="prov_")
+    if not found_cols:
+        found_cols = _autodetect_found_cols(df_catprob)
+    _render_segundo_resumen_limpio(df_catprob, found_cols)
+
