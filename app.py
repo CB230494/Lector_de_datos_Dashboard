@@ -682,6 +682,23 @@ def _render_info_box(scope_df: pd.DataFrame, titulo: str, items: List[str], colo
         unsafe_allow_html=True
     )
 
+def _pluralizar(cat_txt: str, cantidad: int) -> str:
+    """
+    Devuelve el texto ajustado al singular/plural según cantidad.
+    Ejemplo: (1, 'Delito') → '1 Delito'; (2, 'Delito') → '2 Delitos'
+    """
+    base = cat_txt.strip()
+    if cantidad == 1:
+        return f"{cantidad} {base}"
+    else:
+        # regla básica: si termina en 'l' o 'n' añade 'es', si no, 's'
+        if base.lower().endswith(("l","n","r","d","z")):
+            if base.lower().endswith("z"):
+                base = base[:-1] + "c"
+            return f"{cantidad} {base}es"
+        else:
+            return f"{cantidad} {base}s"
+
 def _build_info_panels(scope_df: pd.DataFrame, contexto_txt: str, roles: Tuple[str, ...] = ("gl","fp","mixta")):
     """
     Lee columnas: Categoría, Problemática, Responsable y arma paneles informativos.
@@ -710,23 +727,27 @@ def _build_info_panels(scope_df: pd.DataFrame, contexto_txt: str, roles: Tuple[s
         if "gl" in roles:
             gl_items = sorted(sub[sub["_resp_norm"] == "gl"][prob_col].dropna().astype(str).unique().tolist())
             if gl_items:
+                texto = _pluralizar(cat_txt, len(gl_items))
                 _render_info_box(
-                    sub, f"Municipalidad atiende {len(gl_items)} {cat_txt} como problemática priorizada:", gl_items, color_borde="#9BC3A3"
+                    sub, f"Municipalidad atiende {texto} como problemática priorizada:", gl_items, color_borde="#9BC3A3"
                 )
 
         if "fp" in roles:
             fp_items = sorted(sub[sub["_resp_norm"] == "fp"][prob_col].dropna().astype(str).unique().tolist())
             if fp_items:
+                texto = _pluralizar(cat_txt, len(fp_items))
                 _render_info_box(
-                    sub, f"Fuerza Pública atiende {len(fp_items)} {cat_txt} como problemática priorizada:", fp_items, color_borde="#9BBBD9"
+                    sub, f"Fuerza Pública atiende {texto} como problemática priorizada:", fp_items, color_borde="#9BBBD9"
                 )
 
         if "mixta" in roles:
             mx_items = sorted(sub[sub["_resp_norm"] == "mixta"][prob_col].dropna().astype(str).unique().tolist())
             if mx_items:
+                texto = _pluralizar(cat_txt, len(mx_items))
                 _render_info_box(
-                    sub, f"Fuerza Pública y Municipalidad atienden {len(mx_items)} {cat_txt} como problemática priorizada:", mx_items, color_borde="#E3C17A"
+                    sub, f"Fuerza Pública y Municipalidad atienden {texto} como problemática priorizada:", mx_items, color_borde="#E3C17A"
                 )
+
 
 # ============================= MAIN DASHBOARD =============================
 if dash_file:
@@ -948,4 +969,5 @@ if dash_file:
                         )
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
+
 
