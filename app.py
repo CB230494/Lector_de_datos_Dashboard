@@ -682,13 +682,12 @@ def _render_info_box(scope_df: pd.DataFrame, titulo: str, items: List[str], colo
         unsafe_allow_html=True
     )
 
-def _build_info_panels(scope_df: pd.DataFrame, contexto_txt: str):
+def _build_info_panels(scope_df: pd.DataFrame, contexto_txt: str, roles: Tuple[str, ...] = ("gl","fp","mixta")):
     """
-    Lee columnas: Categoría, Problemática, Responsable y arma:
-    - Municipalidad (GL) atiende N {categoría} y son: [...]
-    - Fuerza Pública (FP) atiende N {categoría} y son: [...]
-    - Ambas instituciones (Mixtas) atienden N {categoría} y son: [...]
-    Separamos por categoría (Riesgo Social / Delito) si existen.
+    Lee columnas: Categoría, Problemática, Responsable y arma paneles informativos.
+    'roles' controla qué instituciones mostrar: ('gl','fp','mixta') por defecto.
+      - Para mostrar solo GL: roles=('gl',)
+      - Para incluir Mixta (ambas): roles=('gl','fp','mixta')
     """
     cat_col = _pick_categoria_col(scope_df)
     prob_col = _pick_problematica_col(scope_df)
@@ -705,25 +704,30 @@ def _build_info_panels(scope_df: pd.DataFrame, contexto_txt: str):
     # Por cada categoría presente
     for cat_val in sorted(tmp["_cat_norm"].dropna().astype(str).unique().tolist()):
         sub = tmp[tmp["_cat_norm"] == cat_val] if cat_col else tmp
-        # GL
-        gl_items = sorted(sub[sub["_resp_norm"] == "gl"][prob_col].dropna().astype(str).unique().tolist())
-        fp_items = sorted(sub[sub["_resp_norm"] == "fp"][prob_col].dropna().astype(str).unique().tolist())
-        mx_items = sorted(sub[sub["_resp_norm"] == "mixta"][prob_col].dropna().astype(str).unique().tolist())
-
-        # Títulos
         cat_txt = cat_val if cat_col else "temas"
-        if gl_items:
-            _render_info_box(
-                sub, f"Municipalidad atiende {len(gl_items)} {cat_txt} como problemática priorizada:", gl_items, color_borde="#9BC3A3"
-            )
-        if fp_items:
-            _render_info_box(
-                sub, f"Fuerza Pública atiende {len(fp_items)} {cat_txt} como problemática priorizada:", fp_items, color_borde="#9BBBD9"
-            )
-        if mx_items:
-            _render_info_box(
-                sub, f"Fuerza Pública y Municipalidad atienden {len(mx_items)} {cat_txt} como problemática priorizada:", mx_items, color_borde="#E3C17A"
-            )
+
+        # Construimos listas por rol solo si están habilitados en 'roles'
+        if "gl" in roles:
+            gl_items = sorted(sub[sub["_resp_norm"] == "gl"][prob_col].dropna().astype(str).unique().tolist())
+            if gl_items:
+                _render_info_box(
+                    sub, f"Municipalidad atiende {len(gl_items)} {cat_txt} como problemática priorizada:", gl_items, color_borde="#9BC3A3"
+                )
+
+        if "fp" in roles:
+            fp_items = sorted(sub[sub["_resp_norm"] == "fp"][prob_col].dropna().astype(str).unique().tolist())
+            if fp_items:
+                _render_info_box(
+                    sub, f"Fuerza Pública atiende {len(fp_items)} {cat_txt} como problemática priorizada:", fp_items, color_borde="#9BBBD9"
+                )
+
+        if "mixta" in roles:
+            mx_items = sorted(sub[sub["_resp_norm"] == "mixta"][prob_col].dropna().astype(str).unique().tolist())
+            if mx_items:
+                _render_info_box(
+                    sub, f"Fuerza Pública y Municipalidad atienden {len(mx_items)} {cat_txt} como problemática priorizada:", mx_items, color_borde="#E3C17A"
+                )
+
 # ============================= MAIN DASHBOARD =============================
 if dash_file:
     try:
@@ -815,7 +819,7 @@ if dash_file:
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
-            # 🔹 Cuadros informativos GL / FP / Mixta con Problemáticas
+            # Cuadros informativos GL / FP / Mixta con Problemáticas (por defecto todos)
             _build_info_panels(scope_df, contexto_txt=titulo_h3)
 
     # =================== TAB 2: POR DIRECCIÓN REGIONAL ===================
@@ -875,8 +879,8 @@ if dash_file:
             bottom = st.container()
             _resumen_avance(bottom, sin_n, sin_p, con_n, con_p, comp_n, comp_p, total_ind)
 
-            # 🔹 Cuadros informativos
-            _build_info_panels(scope_df, contexto_txt=titulo_h3)
+            # 🔹 Cuadros informativos: incluir GL, FP y también MIXTA
+            _build_info_panels(scope_df, contexto_txt=titulo_h3, roles=("gl","fp","mixta"))
 
     # =================== TAB 3: SOLO GOBIERNO LOCAL (PROVINCIA) ==========
     with tabs[2]:
@@ -928,8 +932,8 @@ if dash_file:
                 _panel_tres(st.container(), "Gobierno Local",
                             gl_sin_n, gl_sin_p, gl_con_n, gl_con_p, gl_comp_n, gl_comp_p, gl_tot)
 
-                # Cuadros informativos (GL/FP/Mixta visibles si hay filas en el scope)
-                _build_info_panels(scope_df, contexto_txt=titulo_h3)
+                # 🔹 Cuadros informativos: SOLO lo atendido por Gobierno Local (GL)
+                _build_info_panels(scope_df, contexto_txt=titulo_h3, roles=("gl",))
 
                 if not using_total and "Delegación" in df_prov_sel.columns:
                     delegs = sorted(df_prov_sel["Delegación"].dropna().astype(str).unique().tolist(), key=_deleg_sort_key)
@@ -944,5 +948,4 @@ if dash_file:
                         )
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
-
 
