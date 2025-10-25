@@ -714,15 +714,15 @@ def _build_info_panels(scope_df: pd.DataFrame, contexto_txt: str):
         cat_txt = cat_val if cat_col else "temas"
         if gl_items:
             _render_info_box(
-                sub, f"Municipalidad atiende {len(gl_items)} {cat_txt} y son los siguientes:", gl_items, color_borde="#9BC3A3"
+                sub, f"Municipalidad atiende {len(gl_items)} {cat_txt} como problemática priorizada:", gl_items, color_borde="#9BC3A3"
             )
         if fp_items:
             _render_info_box(
-                sub, f"Fuerza Pública atiende {len(fp_items)} {cat_txt} y son los siguientes:", fp_items, color_borde="#9BBBD9"
+                sub, f"Fuerza Pública atiende {len(fp_items)} {cat_txt} como problemática priorizada:", fp_items, color_borde="#9BBBD9"
             )
         if mx_items:
             _render_info_box(
-                sub, f"Ambas instituciones atienden {len(mx_items)} {cat_txt} y son los siguientes:", mx_items, color_borde="#E3C17A"
+                sub, f"Fuerza Pública y Municipalidad atienden {len(mx_items)} {cat_txt} como problemática priorizada:", mx_items, color_borde="#E3C17A"
             )
 # ============================= MAIN DASHBOARD =============================
 if dash_file:
@@ -944,4 +944,5 @@ if dash_file:
                         )
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
+
 
