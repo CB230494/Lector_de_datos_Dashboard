@@ -754,7 +754,7 @@ def _build_info_panels(scope_df: pd.DataFrame, contexto_txt: str, roles: Tuple[s
             if mx_items:
                 texto = _pluralizar(cat_txt, len(mx_items))
                 _render_info_box(
-                    sub, f"Fuerza Pública y Municipalidad atienden {texto} como problemática priorizada:", mx_items, color_borde="#E3C17A"
+                    sub, f"Fuerza Pública y Municipalidad en conjunto atienden {texto} como problemática priorizada:", mx_items, color_borde="#E3C17A"
                 )
 
 
@@ -978,6 +978,7 @@ if dash_file:
                         )
 else:
     st.info("Carga el Excel consolidado para habilitar los dashboards.")
+
 
 
 
